@@ -27,9 +27,11 @@ def train_model(model, dataloader, config):
             optimizer.zero_grad()
             import pdb; pdb.set_trace()
             out_puts = model(user_id, item_id)
+            import pdb; pdb.set_trace()
             kl_user, kl_item = model.klv_loss()
             kl_divergence = kl_user / config.batch_size + kl_item / config.batch_size
             import pdb; pdb.set_trace()
+            optimizer.step()
 
 
 
@@ -59,7 +61,7 @@ def main(config, user_q=False):
 
     
     if user_q:
-        model = QVAE_CF(user_num, item_num, latent_dim, config.encode_subspace, config.encode_cluster)
+        model = QVAE_CF(user_num, item_num, latent_dim, num_partitions=config.encode_subspace, num_centroids=config.encode_cluster)
     else:
         # modify a real value vectors
         model = VAE_CF(user_num, item_num, latent_dim)

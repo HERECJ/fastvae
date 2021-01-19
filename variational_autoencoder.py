@@ -98,7 +98,7 @@ class QVAE_CF(VAE_CF):
     def __init__(self, num_user, num_item, latent_dim, num_partitions=1, num_centroids=32, **kwargs):
         # num_partitions is the number of splitted subspace
         # num_centroids is the number of centroids 
-        super(QVAE_CF, self).__init__()
+        super(QVAE_CF, self).__init__(num_user, num_item, latent_dim)
         self.num_partitions = num_partitions
         self.num_centroids = num_centroids
 
@@ -109,19 +109,23 @@ class QVAE_CF(VAE_CF):
         
         self._centroids_embedding = nn.ModuleDict()
         for i in range(self.num_partitions):
-            self._centroids_embedding[str(i)] = nn.Embedding(self.num_centroids, self.cluster_dim)
+            self._centroids_embedding[str(i)] = nn.Embedding(self.num_centroids, self.cluster_dim)        
     
     def encode_user(self, user_id):
+        batch_size = len(user_id)
         user_emb = self._User_Embedding(user_id)
         encode_emb = torch.tensor([])
-        logits = torch.zeros((self.num_partitions, self.num_centroids))
+        logits = torch.zeros((self.num_partitions, batch_size, self.num_centroids))
+        cluster_idx_array = torch.LongTensor([i for i in range(self.num_centroids)])
         for i in range(self.num_partitions):
             start_idx = i * self.cluster_dim
             end_idx = (i + 1) * self.cluster_dim
-            distance = -self.compute_distance(user_emb[:,start_idx:end_idx], self._centroids_embedding[str(i)])
-            logit = F.softmax(distance)
+            center_embs = self._centroids_embedding[str(i)](cluster_idx_array)
+            distance = -self.compute_distance(user_emb[:,start_idx:end_idx], center_embs)
+            logit = F.softmax(distance,dim=-1)
             idx_center = F.gumbel_softmax(distance, tau=1, hard=True)
-            encode_emb = torch.cat((encode_emb, self._centroids_embedding[str(i)][idx_center]), dim=1)
+            new_encode_emb = torch.cat((encode_emb, torch.matmul(idx_center, center_embs)), dim=1)
+            encode_emb = new_encode_emb
             logits[i] = logit
         return encode_emb, logits
     
@@ -132,26 +136,28 @@ class QVAE_CF(VAE_CF):
         return (user_vecs * item_vecs).sum(-1)
     
     def klv_loss(self):
+        s = self.klv(mode=1)
+        t = self._kl_user(self.logits)
         return self._kl_user(self.logits),self.klv(mode=1)
     
     def _kl_user(self, user_logits_pos):
-        assert len(user_logits_pos) == self.num_subspace
+        assert len(user_logits_pos) == self.num_partitions
         num_user_batch, num_centroids = user_logits_pos[0].shape
-        assert num_centroids == self.num_clusters
+        assert num_centroids == self.num_centroids
         p = 1.0 / num_centroids
-        pp = p.pow(self.num_subspace)
+        pp = p**self.num_partitions
         kl_loss = 0.0
         for u in range(num_user_batch):
-            tmp = user_logits_pos[:, u, :] # num_subspace * K
+            tmp = user_logits_pos[:, u, :] # num_partitions * K
             res = 1.0
-            for idx in range(self.num_subspace):
-                idx_vec = [1 for i in range(self.num_subspace)]
+            for idx in range(self.num_partitions):
+                idx_vec = [1 for i in range(self.num_partitions)]
                 idx_vec[idx] = num_centroids
                 vec = tmp[idx].view(idx_vec)
                 res = res * vec
             kl_loss += self._kl_multinomial(res,pp)
             # res : [num_centroids, num_centroids, ...]
-            # there are num_centroids^num_subspace items 
+            # there are num_centroids^num_partitions items 
         return kl_loss / num_user_batch
 
 
@@ -159,15 +165,21 @@ class QVAE_CF(VAE_CF):
     def compute_distance(self, emb, centroids, mode=0):
         # compute the similarity between the embedding vector and the centroid vector
         # mode : {0 : L2-distance, 1 : consine similarity, 2 : inner product, 3: other}
-        compare_emb = emb.repeat(1, self.num_centroids)
-        print(compare_emb.shape)
-        import pdb; pdb.set_trace()
+        # emb : batch_size * cluster_dim
+        # centroids : num_cluster * cluster_dim
+        # output : batch_size * num_cluster
         if mode == 0:
-            return F.pairwise_distance(compare_emb, centroids, p=2.0)
+            user_norm = (emb**2).sum(1).view(-1, 1)
+            center_norm = (centroids**2).sum(1).view(1, -1)
+            # return F.pairwise_distance(compare_emb, centroids, p=2.0)
+            return user_norm + center_norm - 2.0 * torch.matmul(emb, centroids.T)
         elif mode == 1:
-            return F.cosine_similarity(compare_emb, centroids)
+            user_norm = torch.norm(emb, dim=1).unsqueeze(1)
+            center_norm = torch.norm(centroids, dim=1).unsqueeze(0)
+            denom =  torch.matmul(user_norm, center_norm)
+            return torch.matmul(emb, centroids.T) / denom
         elif mode == 2:
-            return -(compare_emb * centroids).sum(dim=-1)
+            return -torch.matmul(emb, centroids.T)
         else:
             raise NotImplementedError
     
