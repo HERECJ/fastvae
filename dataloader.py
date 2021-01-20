@@ -10,9 +10,9 @@ class RecData(object):
     def __init__(self, file_name):
         self.file_name = file_name
 
-    def get_data(self):
+    def get_data(self,ratio):
         mat = self.load_file(file_name=self.file_name)
-        train_mat, test_mat = self.split_matrix(mat)
+        train_mat, test_mat = self.split_matrix(mat, ratio)
         return train_mat, test_mat
     
     def load_file(self,file_name=''):
@@ -59,8 +59,6 @@ class UserItemData(Dataset):
     
     def __getitem__(self, idx):
         return self.user[idx], self.item[idx]
-
-
 
 
 if __name__ == "__main__":

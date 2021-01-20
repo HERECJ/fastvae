@@ -26,6 +26,10 @@ class BaseVAE(nn.Module):
     def klv_loss(self):
         pass
 
+    def get_uv(self):
+        # Obtain the latent matrix of users and items
+        raise NotImplementedError
+
     def reparameterize(self, mu, logvar):
         """
         Reparameterization trick to sample from N(mu, var) from
@@ -90,7 +94,13 @@ class VAE_CF(BaseVAE):
             return self._kl_gaussian(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
         else:
             return self._kl_gaussian(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        
+    def get_uv(self):
+        u_user = self.reparameterize(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
+        v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        return u_user, v_item
     
+
 class QVAE_CF(VAE_CF):
     """
     The user embedding is quantized
@@ -136,8 +146,6 @@ class QVAE_CF(VAE_CF):
         return (user_vecs * item_vecs).sum(-1)
     
     def klv_loss(self):
-        s = self.klv(mode=1)
-        t = self._kl_user(self.logits)
         return self._kl_user(self.logits),self.klv(mode=1)
     
     def _kl_user(self, user_logits_pos):
@@ -188,8 +196,12 @@ class QVAE_CF(VAE_CF):
         h2 = q_p * np.log(p + eps)
         # kld_loss = torch.mean(torch.sum(h1 - h2, dim =(1,2)), dim=0)
         return (h1 - h2).sum()
-            
-            
+    
+    def get_uv(self):
+        v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        user_idx_array = torch.LongTensor([i for i in range(self.num_user)])
+        u_user, _ = self.encode_user(user_idx_array)
+        return u_user, v_item
 
 
 
