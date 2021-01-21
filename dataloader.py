@@ -162,7 +162,6 @@ class Sampled_Iterator(IterableDataset):
                     yield torch.LongTensor([i]), torch.LongTensor([j]), torch.LongTensor(neg_item), torch.Tensor(prob)
         return generate_tuples
     
-
     def sample_gumbel_noise(self, inputs,eps=1e-7):
         u = torch.rand(inputs.shape)
         return -torch.log(eps - torch.log(u + eps))
@@ -170,6 +169,16 @@ class Sampled_Iterator(IterableDataset):
     def sample_from_gumbel_noise(self, scores):
         return torch.argmax(scores  + self.sample_gumbel_noise(scores)), torch.max(scores + self.sample_gumbel_noise(scores))
 
+# def worker_init_fn(worker_id):
+#     worker_info = torch.utils.data.get_worker_info()
+#     dataset = worker_info.dataset  # the dataset copy in this worker process
+#     overall_start = dataset.start
+#     overall_end = dataset.end
+#     # configure the dataset to only process the split workload
+#     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
+#     worker_id = worker_info.id
+#     dataset.start = overall_start + worker_id * per_worker
+#     dataset.end = min(dataset.start + per_worker, overall_end)
 
 
 
@@ -180,9 +189,11 @@ if __name__ == "__main__":
     user_num, item_num = train.shape
     user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
 
-    test_iter = Sampled_Iterator(train, user_emb, item_emb, 2, 6, 32, 10)
-    test_dataloader = DataLoader(test_iter, batch_size=32)
-    for x in test_dataloader:
-        import pdb; pdb.set_trace()
-        b = 1
-        print(x)
+    test_iter = Sampled_Iterator(train, user_emb, item_emb, 2, 6, 32, 50)
+    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=8)
+    import time
+    tmp = time.time()
+    for idx, x in enumerate(test_dataloader):
+        a = time.time()
+        print(a-tmp, 's;')
+        tmp = a
