@@ -49,17 +49,17 @@ class RecData(object):
         test_mat = sp.sparse.csr_matrix((test_data, test_indices, test_indptr), (m,n))
         return train_mat, test_mat
 
-class UserItemData(Dataset):
-    def __init__(self, train_mat):
-        super(UserItemData, self).__init__()
-        self.train = train_mat.tocoo()
-        self.user, self.item = self.train.row.astype(np.int64), self.train.col.astype(np.int64)
+# class UserItemData(Dataset):
+#     def __init__(self, train_mat):
+#         super(UserItemData, self).__init__()
+#         self.train = train_mat.tocoo()
+#         self.user, self.item = self.train.row.astype(np.int64), self.train.col.astype(np.int64)
     
-    def __len__(self):
-        return self.train.nnz
+#     def __len__(self):
+#         return self.train.nnz
     
-    def __getitem__(self, idx):
-        return self.user[idx], self.item[idx]
+#     def __getitem__(self, idx):
+#         return self.user[idx], self.item[idx]
 
 
 class Sampled_Iterator(IterableDataset):
@@ -125,8 +125,10 @@ class Sampled_Iterator(IterableDataset):
                     for history_cluster in idx:
                         sample_probs = sample_probs[history_cluster]
                 extra = sample_probs.squeeze()
-                idx_cluster, p = self.sample_from_gumbel_noise(self.center_scores[i][self.user_id], torch.log(extra))
+                total_score = self.center_scores[i][self.user_id] + torch.log(extra)
+                idx_cluster, estimate_par = self.sample_from_gumbel_noise(total_score)
                 idx.append(idx_cluster)
+                probs *= total_score[idx_cluster] / estimate_par
                 
             # sample from the final items
             index_combine_cluster = 0
@@ -134,8 +136,10 @@ class Sampled_Iterator(IterableDataset):
                 index_combine_cluster = index_combine_cluster * self.num_cluster + ii
             items_index = self.items_in_combine_cluster[index_combine_cluster]
             rui_items = self.delta_ruis[self.user_id][items_index]
-            item_sample_index, p = self.sample_from_gumbel_noise(rui_items)
-            return items_index[item_sample_index], p
+            item_sample_index, estimate_par = self.sample_from_gumbel_noise(rui_items)
+            probs *= rui_items[item_sample_index] / estimate_par
+            # import pdb; pdb.set_trace()
+            return items_index[item_sample_index], probs
         return sample, self.exist
 
     def negative_sampler(self, neg):
@@ -159,15 +163,12 @@ class Sampled_Iterator(IterableDataset):
         return generate_tuples
     
 
-    def sample_gumbel_noise(self, input,eps=1e-7):
-        u = torch.rand(input.shape)
+    def sample_gumbel_noise(self, inputs,eps=1e-7):
+        u = torch.rand(inputs.shape)
         return -torch.log(eps - torch.log(u + eps))
     
-    def sample_from_gumbel_noise(self, scores, extra=None):
-        if extra is None:
-            extra = torch.zeros_like(scores)
-        # import pdb; pdb.set_trace()
-        return torch.argmax(scores + extra + self.sample_gumbel_noise(scores)), torch.max(scores + extra + self.sample_gumbel_noise(scores))
+    def sample_from_gumbel_noise(self, scores):
+        return torch.argmax(scores  + self.sample_gumbel_noise(scores)), torch.max(scores + self.sample_gumbel_noise(scores))
 
 
 

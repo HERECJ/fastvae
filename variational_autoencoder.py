@@ -69,10 +69,15 @@ class VAE_CF(BaseVAE):
     def encode_item(self, item_id):
         return self.reparameterize(self._Item_Embedding_mu(item_id), self._Item_Embedding_logvar(item_id))
     
-    def forward(self, user_id, item_id):
+    # def forward(self, user_id, item_id):
+        # user_vecs = self.encode_user(user_id)
+        # item_vecs = self.encode_item(item_id)
+        # return (user_vecs * item_vecs).sum(-1)
+    def forward(self, user_id, pos_id, neg_ids):
         user_vecs = self.encode_user(user_id)
-        item_vecs = self.encode_item(item_id)
-        return (user_vecs * item_vecs).sum(-1)
+        pos_items = self.encode_item(pos_id)
+        neg_items = self.encode_item(neg_ids)
+        return (user_vecs * pos_items).sum(-1), (user_vecs * neg_items).sum(-1) 
     
 
     def klv_loss(self):
@@ -139,11 +144,17 @@ class QVAE_CF(VAE_CF):
             logits[i] = logit
         return encode_emb, logits
     
-    def forward(self, user_id, item_id):
-        import pdb; pdb.set_trace()
+    # def forward(self, user_id, item_id):
+        # import pdb; pdb.set_trace()
+        # user_vecs, self.logits = self.encode_user(user_id)
+        # item_vecs = self.encode_item(item_id)
+        # return (user_vecs * item_vecs).sum(-1)
+
+    def forward(self, user_id, pos_id, neg_ids):
         user_vecs, self.logits = self.encode_user(user_id)
-        item_vecs = self.encode_item(item_id)
-        return (user_vecs * item_vecs).sum(-1)
+        pos_items = self.encode_item(pos_id)
+        neg_items = self.encode_item(neg_ids)
+        return (user_vecs * pos_items).sum(-1), (user_vecs * neg_items).sum(-1) 
     
     def klv_loss(self):
         return self._kl_user(self.logits),self.klv(mode=1)
