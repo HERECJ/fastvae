@@ -46,7 +46,7 @@ class BaseVAE(nn.Module):
         # here we utilize the Gaussian distribution
         # the prior distribution is the standard Gaussian
         return torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
-
+    
 class VAE_CF(BaseVAE):
     """
     The Model depending on real values of user and item vectors
@@ -105,7 +105,7 @@ class QVAE_CF(VAE_CF):
     """
     The user embedding is quantized
     """
-    def __init__(self, num_user, num_item, latent_dim, num_partitions=1, num_centroids=32, **kwargs):
+    def __init__(self, num_user, num_item, latent_dim, num_partitions=2, num_centroids=32, **kwargs):
         # num_partitions is the number of splitted subspace
         # num_centroids is the number of centroids 
         super(QVAE_CF, self).__init__(num_user, num_item, latent_dim)

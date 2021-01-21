@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from variational_autoencoder import QVAE_CF, VAE_CF
 import argparse
 from dataloader import RecData, UserItemData
-from sampler import sampler
+from sampler import sampler, SamplerModel
 import pdb
 import numpy as np
 from utils import Eval
@@ -33,7 +33,6 @@ def get_logger(filename, verbosity=1, name=None):
     logger.addHandler(sh)
 
     return logger
-
 
 
 def setup_seed(seed):
@@ -87,8 +86,6 @@ def train_model(model, dataloader, config, logger):
                 # print("--Batch %d, loss : %.4f "%(batch_idx, loss.data))
 
 
-
-
 def utils_optim(config, model):
     if config.optim=='adam':
         return torch.optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -103,6 +100,7 @@ def main(config, user_q=False, logger=None):
     data = RecData(config.data)
     train_mat, test_mat = data.get_data(config.ratio)
     user_num, item_num = train_mat.shape
+    logging.info('The shape of datasets: %d, %d'%(user_num, item_num))
     latent_dim = config.dim
     num_subspace = config.subspace_num
     num_cluster = config.cluster_num
@@ -121,15 +119,17 @@ def main(config, user_q=False, logger=None):
         model = VAE_CF(user_num, item_num, latent_dim)
     train_model(model, train_dataloader, config, logger)
     
+    user_emb, item_emb = model.get_uv()
+    samples = SamplerModel(train_mat, user_emb, item_emb, num_subspace, cluster_dim, num_cluster)
+    import pdb; pdb.set_trace()
+    t = samples.negative_sampler(4)
+    import pdb; pdb.set_trace()
+    # with torch.no_grad():
+    #     user_emb, item_emb = model.get_uv()
+    #     sample = sampler(user_emb, item_emb, num_subspace, cluster_dim, num_cluster, res_dim)
+    #     sample.preprocess(10)
+    #     item = sample.__sampler__()
     
-    # item_embeds = model.get_item_emb()
-    # sample = sampler(item_embeds[:500], item_embeds, num_subspace, cluster_dim, num_cluster, res_dim)
-    # sample.preprocess(10)
-    # item = sample.__sampler__()
-
-
-
-    print(user_num, item_num)
     return evaluate(model, train_mat, test_mat, config, logger)
 
 
@@ -138,8 +138,8 @@ if __name__ == "__main__":
     parser.add_argument('-data', default='ml100kdata.mat', type=str, help='path of datafile')
     parser.add_argument('-d', '--dim', default=20, type=int, help='the dimenson of the latent vector for student model')
     parser.add_argument('-r', '--reg', default=1e-3, type=float, help='coefficient of the regularizer')
-    parser.add_argument('-s','--sample_num', default=3, type=int, help='the number of sampled items')
-    parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
+    parser.add_argument('-s','--sample_num', default=5, type=int, help='the number of sampled items')
+    parser.add_argument('--subspace_num', default=3, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
     parser.add_argument('--cluster_dim', default=6, type=int, help=' the dimension of the cluster' )
     # parser.add_argument('--res_dim', default=0, type=int, help='residual dimension latent_dim - subspace_num * cluster_dim')
