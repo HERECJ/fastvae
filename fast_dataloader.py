@@ -50,17 +50,7 @@ class RecData(object):
         test_mat = sp.sparse.csr_matrix((test_data, test_indices, test_indptr), (m,n))
         return train_mat, test_mat
 
-# class UserItemData(Dataset):
-#     def __init__(self, train_mat):
-#         super(UserItemData, self).__init__()
-#         self.train = train_mat.tocoo()
-#         self.user, self.item = self.train.row.astype(np.int64), self.train.col.astype(np.int64)
-    
-#     def __len__(self):
-#         return self.train.nnz
-    
-#     def __getitem__(self, idx):
-#         return self.user[idx], self.item[idx]
+
 
 
 class Sampled_Iterator(IterableDataset):
@@ -172,9 +162,9 @@ class Sampled_Iterator(IterableDataset):
         return torch.argmax(scores  + self.sample_gumbel_noise(scores)), torch.max(scores + self.sample_gumbel_noise(scores))
 
 
-class Fast_Sampler_Loader(Sampled_Iterator):
+class Fast2_Sampler_Loader(Sampled_Iterator):
     def __init__(self, mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg):
-        super(Fast_Sampler_Loader, self).__init__(mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg)
+        super(Fast2_Sampler_Loader, self).__init__(mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg)
         self.start_user  = 0
         self.end_user = self.num_users
 
@@ -264,17 +254,6 @@ class Fast_Sampler_Loader(Sampled_Iterator):
             return torch.argmax(tmp, dim=-1), torch.max(tmp, dim=-1)
         
 
-# def worker_init_fn(worker_id):
-#     worker_info = torch.utils.data.get_worker_info()
-    
-#     dataset = worker_info.dataset  # the dataset copy in this worker process
-#     overall_start = dataset.start
-#     overall_end = dataset.end
-#     # configure the dataset to only process the split workload
-#     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
-#     worker_id = worker_info.id
-#     dataset.start = overall_start + worker_id * per_worker
-#     dataset.end = min(dataset.start + per_worker, overall_end)
 
 def worker_init_fn(worker_id):
      worker_info = torch.utils.data.get_worker_info()
