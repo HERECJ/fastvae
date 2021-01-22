@@ -86,17 +86,16 @@ def train_model(model, train_mat, config, logger):
         
         t0 = time.time()
         for batch_idx, data in enumerate(train_dataloader):
-            b = time.time()
-            print('Batch ', batch_idx, ' time : ', b-t0)
-            t0 = b
-            # user_id, item_id = data
+            # b = time.time()
+            # print('Batch ', batch_idx, ' time : ', b-t0)
+            # t0 = b
             user_id, pos_id, neg_id, probs = data
             optimizer.zero_grad()
             pos_rat, neg_rat = model(user_id, pos_id, neg_id)
             loss = compute_loss(pos_rat, neg_rat, probs)
             kl_user, kl_item = model.klv_loss()
-            # kl_divergence = kl_user / config.batch_size + kl_item / config.batch_size
-            kl_divergence = (kl_user + kl_item) / (batch_idx + 1.0)
+            kl_divergence = kl_user / config.batch_size + kl_item / config.batch_size
+            # kl_divergence = (kl_user + kl_item) / (batch_idx + 1.0)
             loss += kl_divergence
             loss.backward()
             optimizer.step()
