@@ -5,13 +5,14 @@ import torch.optim
 from torch.utils.data import DataLoader
 from variational_autoencoder import QVAE_CF, VAE_CF
 import argparse
-from dataloader import RecData, Sampled_Iterator
+from dataloader import RecData, Sampled_Iterator, Fast_Sampler_Loader
 import numpy as np
 from utils import Eval
-import logging
+import logging, coloredlogs
 import scipy as sp
 import scipy.io
 import datetime, time
+# coloredlogs.install(level='DEBUG')
 
 def get_logger(filename, verbosity=1, name=None):
     filename = filename + '.txt'
@@ -78,11 +79,16 @@ def train_model(model, train_mat, config, logger):
         # print("--Epoch %d"%epoch)
 
         user_emb, item_emb = model.get_uv()
-        train_data = Sampled_Iterator(train_mat, user_emb, item_emb, config.subspace_num, config.cluster_dim, config.cluster_num, config.sample_num)
-        train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=8)
+        # train_data = Sampled_Iterator(train_mat, user_emb, item_emb, config.subspace_num, config.cluster_dim, config.cluster_num, config.sample_num)
+        train_data = Fast_Sampler_Loader(train_mat, user_emb, item_emb, config.subspace_num, config.cluster_dim, config.cluster_num, config.sample_num)
+        train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=0)
         logging.info('Finish Sampling, Start training !!!')
-
+        
+        t0 = time.time()
         for batch_idx, data in enumerate(train_dataloader):
+            b = time.time()
+            print('Batch ', batch_idx, ' time : ', b-t0)
+            t0 = b
             # user_id, item_id = data
             user_id, pos_id, neg_id, probs = data
             optimizer.zero_grad()
@@ -96,6 +102,9 @@ def train_model(model, train_mat, config, logger):
             optimizer.step()
             if (batch_idx % 5) == 0:
                 logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
+                # logger.info("--Batch %d"%(batch_idx))
+            # if batch_idx > 10:
+                # break
 
 
 
@@ -136,15 +145,15 @@ if __name__ == "__main__":
     parser.add_argument('-data', default='ml100kdata.mat', type=str, help='path of datafile')
     parser.add_argument('-d', '--dim', default=20, type=int, help='the dimenson of the latent vector for student model')
     # parser.add_argument('-r', '--reg', default=1e-2, type=float, help='coefficient of the regularizer')
-    parser.add_argument('-s','--sample_num', default=10, type=int, help='the number of sampled items')
+    parser.add_argument('-s','--sample_num', default=20, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
     parser.add_argument('--cluster_dim', default=6, type=int, help=' the dimension of the cluster' )
     # parser.add_argument('--res_dim', default=0, type=int, help='residual dimension latent_dim - subspace_num * cluster_dim')
     parser.add_argument('--encode_subspace', default=2, type=int, help='the subspace for user encoding')
     parser.add_argument('--encode_cluster', default=8, type=int, help='the number of clusters for user encoding')
-    parser.add_argument('-b', '--batch_size', default=1024, type=int, help='the batch size for training')
-    parser.add_argument('-e','--epoch', default=5, type=int, help='the number of epoches')
+    parser.add_argument('-b', '--batch_size', default=512, type=int, help='the batch size for training')
+    parser.add_argument('-e','--epoch', default=3, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
     parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help='the learning rate for training')
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
@@ -173,3 +182,5 @@ if __name__ == "__main__":
     svmat_name = log_file_name + '.mat'
     scipy.io.savemat(svmat_name, m)
     # import pdb; pdb.set_trace()
+    # import cProfile
+    # cProfile.run('main(config, config.user_quatized, logger)')

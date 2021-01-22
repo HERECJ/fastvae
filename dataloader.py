@@ -93,6 +93,7 @@ class Sampled_Iterator(IterableDataset):
         return self.negative_sampler(self.num_neg)()
 
     def preprocess(self, user_id):
+        import time
         self.exist = set(self.mat.indices[j] for j in range(self.mat.indptr[user_id], self.mat.indptr[user_id + 1]))
 
         self.user_id = user_id
@@ -128,8 +129,8 @@ class Sampled_Iterator(IterableDataset):
                 total_score = self.center_scores[i][self.user_id] + torch.log(extra)
                 idx_cluster, estimate_par = self.sample_from_gumbel_noise(total_score)
                 idx.append(idx_cluster)
-                probs *= total_score[idx_cluster] / estimate_par
-                
+                probs *= total_score[idx_cluster] / torch.exp(torch.negative(estimate_par))
+            
             # sample from the final items
             index_combine_cluster = 0
             for ii in idx:
@@ -137,8 +138,7 @@ class Sampled_Iterator(IterableDataset):
             items_index = self.items_in_combine_cluster[index_combine_cluster]
             rui_items = self.delta_ruis[self.user_id][items_index]
             item_sample_index, estimate_par = self.sample_from_gumbel_noise(rui_items)
-            probs *= rui_items[item_sample_index] / estimate_par
-            # import pdb; pdb.set_trace()
+            probs *= rui_items[item_sample_index] / torch.exp(torch.negative(estimate_par))
             return items_index[item_sample_index], probs
         return sample, self.exist
 
@@ -153,6 +153,7 @@ class Sampled_Iterator(IterableDataset):
         def generate_tuples():
             for i in np.random.permutation(self.num_users):
                 self.preprocess(i)
+                # print('user id : ', i, ', num_rated_item : ', len(self.exist))
                 for j in self.exist:
                     neg_item = [0] * neg
                     prob = [0.] * neg
@@ -168,6 +169,94 @@ class Sampled_Iterator(IterableDataset):
     
     def sample_from_gumbel_noise(self, scores):
         return torch.argmax(scores  + self.sample_gumbel_noise(scores)), torch.max(scores + self.sample_gumbel_noise(scores))
+
+
+class Fast_Sampler_Loader(Sampled_Iterator):
+    def __init__(self, mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg):
+        super(Fast_Sampler_Loader, self).__init__(mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg)
+    
+    def __sampler__(self, user_id, pos_id):
+        def sample():
+            idx = []
+            probs = []
+            start_flag = True
+            for i in range(self.num_subspace):
+                sample_probs = self.sample_prob[i]
+                if len(idx) > 0:
+                    start_flag = False
+                    for history_cluster in idx:
+                        sample_probs = sample_probs[history_cluster]
+                extra = sample_probs.squeeze()
+                total_score = self.center_scores[i][self.user_id] + torch.log(extra)
+                idx_clusters, estimate_par = self.sample_from_gumbel_noise(total_score, start_flag)
+                idx.append(idx_clusters)
+                if start_flag:
+                    new_prob =  torch.exp(total_score[idx_clusters]) * torch.exp(torch.negative(estimate_par.values))
+                else:
+                    row_idx = torch.LongTensor([x for x in range(self.num_neg)])
+                    new_prob = torch.exp(total_score[row_idx,idx_clusters]) * torch.exp(torch.negative(estimate_par.values))
+                probs.append(new_prob)
+            
+            fprobs = torch.mul(probs[0], probs[1])
+            # sample from the final items
+            
+            items = []
+            final_probs = []
+            i = 0
+            while True:
+                index_combine_cluster = idx[0][i] * self.num_cluster + idx[1][i]
+                items_index = self.items_in_combine_cluster[index_combine_cluster]
+                if len(items_index) == 1:
+                    items.append(items_index[0])
+                    final_probs.append(fprobs[i])
+                elif len(items_index) < 1:
+                    continue
+                else:
+                    rui_items = self.delta_ruis[self.user_id][items_index]
+                    item_sample_index, estimate_par = self.sample_from_gumbel_noise(rui_items)
+                    delta_probs = torch.exp(rui_items[item_sample_index]) * torch.exp(torch.negative(estimate_par.values))
+                    items.append(items_index[item_sample_index])
+                    final_probs.append(fprobs[i] * delta_probs)
+                
+                i += 1
+                
+                # print(i, self.num_neg-1)
+                if i > (self.num_neg-1):
+                    break
+            return items, final_probs
+        return sample
+
+    def negative_sampler(self, neg):
+        def sample_negative(user_id, pos_id):
+            sample = self.__sampler__(user_id, pos_id)
+            k, p = sample()
+            return k, p
+
+        def generate_tuples():
+            for i in np.random.permutation(self.num_users):
+                self.preprocess(i)
+                # print('user id : ', i, ', num_rated_item : ', len(self.exist))
+                for j in self.exist:
+                    # print('num_samples : ', self.num_neg)
+                    neg_item, probs = sample_negative(i, j)
+                    yield torch.LongTensor([i]), torch.LongTensor([j]), torch.LongTensor(neg_item), torch.Tensor(probs)
+        return generate_tuples
+
+    def sample_gumbel_noise(self, inputs,eps=1e-7, start_flag=False):
+        if start_flag:
+            us = torch.rand(inputs.unsqueeze(-1).expand(-1, self.num_neg).shape)
+        else:
+            us = torch.rand(inputs.shape)
+        return -torch.log(- torch.log(us + eps) + eps)
+    
+    def sample_from_gumbel_noise(self, scores, start_flag=False):
+        if start_flag:
+            tmp = scores.unsqueeze(-1) + self.sample_gumbel_noise(scores, start_flag=True)
+            return torch.argmax(tmp, dim=0), torch.max(tmp, dim=0)
+        else:
+            tmp = scores + self.sample_gumbel_noise(scores)
+            return torch.argmax(tmp, dim=-1), torch.max(tmp, dim=-1)
+        
 
 # def worker_init_fn(worker_id):
 #     worker_info = torch.utils.data.get_worker_info()
@@ -189,11 +278,20 @@ if __name__ == "__main__":
     user_num, item_num = train.shape
     user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
 
-    test_iter = Sampled_Iterator(train, user_emb, item_emb, 2, 6, 32, 50)
-    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=8)
+    # test_iter = Sampled_Iterator(train[:500], user_emb, item_emb, 2, 6, 32, 5)
+    test_iter = Fast_Sampler_Loader(train[:500], user_emb, item_emb, 2, 6, 32, 5)
+    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=0)
     import time
     tmp = time.time()
+    t0 = tmp
+    data_len = 0
     for idx, x in enumerate(test_dataloader):
-        a = time.time()
-        print(a-tmp, 's;')
-        tmp = a
+        data_len += len(x[0])
+        # import pdb; pdb.set_trace()
+        if (idx % 5) < 1:
+            tt = time.time()
+            print(idx, tt-tmp)
+            tmp = tt
+        print(idx)
+    print(time.time() - t0)
+    print(train[:500].nnz, data_len)
