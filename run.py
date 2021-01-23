@@ -115,8 +115,8 @@ def train_model(model, train_mat, config, logger):
             if (batch_idx % 5) == 0:
                 logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
                 # logger.info("--Batch %d"%(batch_idx))
-            # if batch_idx > 10:
-                # break
+            if batch_idx > 5:
+                break
 
 
 
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument('--cluster_dim', default=6, type=int, help=' the dimension of the cluster' )
     # parser.add_argument('--res_dim', default=0, type=int, help='residual dimension latent_dim - subspace_num * cluster_dim')
     parser.add_argument('--encode_subspace', default=2, type=int, help='the subspace for user encoding')
-    parser.add_argument('--encode_cluster', default=8, type=int, help='the number of clusters for user encoding')
+    parser.add_argument('--encode_cluster', default=48, type=int, help='the number of clusters for user encoding')
     parser.add_argument('-b', '--batch_size', default=2048, type=int, help='the batch size for training')
     parser.add_argument('-e','--epoch', default=20, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
     parser.add_argument('--ratio', default=0.8, type=float, help='the spilit ratio of dataset for train and test')
     parser.add_argument('--log_path', default='log', type=str, help='the path for log files')
-    parser.add_argument('--user_quatized', default=False, type=bool, help='whether to quantize the user embeddings')
+    parser.add_argument('--user_quatized', default=True, type=bool, help='whether to quantize the user embeddings')
     parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for dataloader')
 
 
@@ -190,10 +190,10 @@ if __name__ == "__main__":
     
     logger.info(config)
     setup_seed(config.seed)
-    m = main(config, config.user_quatized, logger)
-    logger.info("Finish")
-    svmat_name = log_file_name + '.mat'
-    scipy.io.savemat(svmat_name, m)
+    # m = main(config, config.user_quatized, logger)
+    # logger.info("Finish")
+    # svmat_name = log_file_name + '.mat'
+    # scipy.io.savemat(svmat_name, m)
     # import pdb; pdb.set_trace()
-    # import cProfile
-    # cProfile.run('main(config, config.user_quatized, logger)')
+    import cProfile
+    cProfile.run('main(config, config.user_quatized, logger)')

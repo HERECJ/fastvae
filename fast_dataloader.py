@@ -67,6 +67,7 @@ class Sampled_Iterator(IterableDataset):
         self.num_neg = num_neg
         _, latent_dim = user_embs.shape
         assert (latent_dim - num_subspace * cluster_dim) > 0
+        print(self.num_items, self.num_items)
 
         for i in range(self.num_subspace):
             start_idx = i * cluster_dim
@@ -167,6 +168,7 @@ class Fast2_Sampler_Loader(Sampled_Iterator):
         super(Fast2_Sampler_Loader, self).__init__(mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg)
         self.start_user  = 0
         self.end_user = self.num_users
+        print(mat.nnz)
 
     def __iter__(self):
         return self.negative_sampler(self.num_neg, self.start_user, self.end_user)()
@@ -269,13 +271,13 @@ def worker_init_fn(worker_id):
 if __name__ == "__main__":
     data = RecData('ml100kdata.mat')
     train, test = data.get_data(0.8)
-    print(train.shape, test.shape)
+    # print(train.shape, test.shape)
     user_num, item_num = train.shape
     user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
 
     # test_iter = Sampled_Iterator(train[:500], user_emb, item_emb, 2, 6, 32, 5)
     test_iter = Fast_Sampler_Loader(train[:500], user_emb, item_emb, 2, 6, 32, 5)
-    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=8, worker_init_fn=worker_init_fn)
+    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=4, worker_init_fn=worker_init_fn)
     import time
     tmp = time.time()
     t0 = tmp

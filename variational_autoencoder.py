@@ -126,7 +126,8 @@ class QVAE_CF(VAE_CF):
         for i in range(self.num_partitions):
             self._centroids_embedding[str(i)] = nn.Embedding(self.num_centroids, self.cluster_dim)        
     
-    def encode_user(self, user_id):
+    def encode_user(self, user_ids):
+        user_id = user_ids.squeeze(-1)
         batch_size = len(user_id)
         user_emb = self._User_Embedding(user_id)
         encode_emb = torch.tensor([])
@@ -136,7 +137,7 @@ class QVAE_CF(VAE_CF):
             start_idx = i * self.cluster_dim
             end_idx = (i + 1) * self.cluster_dim
             center_embs = self._centroids_embedding[str(i)](cluster_idx_array)
-            distance = -self.compute_distance(user_emb[:,start_idx:end_idx], center_embs)
+            distance = -self.compute_distance(user_emb[...,start_idx:end_idx], center_embs)
             logit = F.softmax(distance,dim=-1)
             idx_center = F.gumbel_softmax(distance, tau=1, hard=True)
             new_encode_emb = torch.cat((encode_emb, torch.matmul(idx_center, center_embs)), dim=1)
@@ -151,7 +152,8 @@ class QVAE_CF(VAE_CF):
         # return (user_vecs * item_vecs).sum(-1)
 
     def forward(self, user_id, pos_id, neg_ids):
-        user_vecs, self.logits = self.encode_user(user_id)
+        user_vec, self.logits = self.encode_user(user_id)
+        user_vecs = user_vec.unsqueeze(1)
         pos_items = self.encode_item(pos_id)
         neg_items = self.encode_item(neg_ids)
         return (user_vecs * pos_items).sum(-1), (user_vecs * neg_items).sum(-1) 
