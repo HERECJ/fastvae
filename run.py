@@ -115,8 +115,8 @@ def train_model(model, train_mat, config, logger):
             if (batch_idx % 5) == 0:
                 logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
                 # logger.info("--Batch %d"%(batch_idx))
-            if batch_idx > 5:
-                break
+            # if batch_idx > 5:
+            #     break
 
 
 
@@ -155,9 +155,9 @@ def main(config, user_q=False, logger=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Initialize Parameters!')
     parser.add_argument('-data', default='ml100kdata.mat', type=str, help='path of datafile')
-    parser.add_argument('-d', '--dim', default=20, type=int, help='the dimenson of the latent vector for student model')
+    parser.add_argument('-d', '--dim', default=64, type=int, help='the dimenson of the latent vector for student model')
     # parser.add_argument('-r', '--reg', default=1e-2, type=float, help='coefficient of the regularizer')
-    parser.add_argument('-s','--sample_num', default=30, type=int, help='the number of sampled items')
+    parser.add_argument('-s','--sample_num', default=5, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
     parser.add_argument('--cluster_dim', default=6, type=int, help=' the dimension of the cluster' )
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
     parser.add_argument('--ratio', default=0.8, type=float, help='the spilit ratio of dataset for train and test')
     parser.add_argument('--log_path', default='log', type=str, help='the path for log files')
-    parser.add_argument('--user_quatized', default=True, type=bool, help='whether to quantize the user embeddings')
+    parser.add_argument('--user_quatized', default=False, type=bool, help='whether to quantize the user embeddings')
     parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for dataloader')
 
 
@@ -190,10 +190,10 @@ if __name__ == "__main__":
     
     logger.info(config)
     setup_seed(config.seed)
-    # m = main(config, config.user_quatized, logger)
-    # logger.info("Finish")
-    # svmat_name = log_file_name + '.mat'
-    # scipy.io.savemat(svmat_name, m)
+    m = main(config, config.user_quatized, logger)
+    logger.info("Finish")
+    svmat_name = log_file_name + '.mat'
+    scipy.io.savemat(svmat_name, m)
     # import pdb; pdb.set_trace()
-    import cProfile
-    cProfile.run('main(config, config.user_quatized, logger)')
+    # import cProfile
+    # cProfile.run('main(config, config.user_quatized, logger)')
