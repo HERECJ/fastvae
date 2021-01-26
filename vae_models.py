@@ -60,8 +60,8 @@ class VAE_CF(BaseVAE):
         self._User_Embedding_mu = nn.Embedding(self.num_user, self.latent_dim)
         self._User_Embedding_logvar = nn.Embedding(self.num_user, self.latent_dim)
 
-        self._Item_Embedding_mu = nn.Embedding(self.num_item, self.latent_dim)
-        self._Item_Embedding_logvar = nn.Embedding(self.num_item, self.latent_dim)
+        self._Item_Embedding_mu = nn.Embedding(self.num_item + 1, self.latent_dim)
+        self._Item_Embedding_logvar = nn.Embedding(self.num_item + 1, self.latent_dim)
     
     def encode_user(self, user_id):
         return self.reparameterize(self._User_Embedding_mu(user_id), self._User_Embedding_logvar(user_id))
@@ -74,8 +74,9 @@ class VAE_CF(BaseVAE):
         # item_vecs = self.encode_item(item_id)
         # return (user_vecs * item_vecs).sum(-1)
     def forward(self, user_id, pos_id, neg_ids):
-        user_vecs = self.encode_user(user_id)
-        pos_items = self.encode_item(pos_id)
+        mask = (pos_id!=0).unsqueeze(dim=-1)
+        user_vecs = self.encode_user(user_id).unsqueeze(dim=1)
+        pos_items = self.encode_item(pos_id) * mask
         neg_items = self.encode_item(neg_ids)
         return (user_vecs * pos_items).sum(-1), (user_vecs * neg_items).sum(-1) 
     
@@ -98,13 +99,13 @@ class VAE_CF(BaseVAE):
         if mode < 1:
             return self._kl_gaussian(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
         else:
-            return self._kl_gaussian(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+            return self._kl_gaussian(self._Item_Embedding_mu.weight[1:], self._Item_Embedding_logvar.weight[1:])
         
     def get_uv(self):
         # u_user = self.reparameterize(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
         # v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
         u_user = self._User_Embedding_mu.weight
-        v_item = self._Item_Embedding_mu.weight
+        v_item = self._Item_Embedding_mu.weight[1:]
         return u_user, v_item
 
 # class Base_VAECF(VAE_CF):

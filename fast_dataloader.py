@@ -7,10 +7,11 @@ import numpy as np
 import pdb
 from sklearn.cluster import KMeans
 import math
+import os
 
 class RecData(object):
-    def __init__(self, file_name):
-        self.file_name = file_name
+    def __init__(self, dir, file_name):
+        self.file_name = os.path.join(dir, file_name)
 
     def get_data(self,ratio):
         mat = self.load_file(file_name=self.file_name)
@@ -51,12 +52,9 @@ class RecData(object):
         return train_mat, test_mat
 
 
-
-
-class Sampled_Iterator(IterableDataset):
+class Fast2_Sampler_Loader(IterableDataset):
     def __init__(self, mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg):
-        super(Sampled_Iterator, self).__init__()
-
+        super(Fast2_Sampler_Loader, self).__init__()
         self.mat = mat.tocsr()
         self.num_users, self.num_items = mat.shape
 
@@ -67,7 +65,7 @@ class Sampled_Iterator(IterableDataset):
         self.num_neg = num_neg
         _, latent_dim = user_embs.shape
         assert (latent_dim - num_subspace * cluster_dim) > 0
-        print(self.num_items, self.num_items)
+        # print(self.num_items, self.num_items)
 
         for i in range(self.num_subspace):
             start_idx = i * cluster_dim
@@ -80,13 +78,17 @@ class Sampled_Iterator(IterableDataset):
             self.combine_cluster_idx = self.combine_cluster_idx * self.num_cluster + codes
         
         self.delta_ruis = torch.matmul(user_embs[:,end_idx:], item_embs[:,end_idx:].T)
-    
-    def __iter__(self):
-        return self.negative_sampler(self.num_neg)()
 
+        self.start_user  = 0
+        self.end_user = self.num_users
+        print(mat.nnz)
+
+    def __iter__(self):
+        return self.negative_sampler(self.num_neg, self.start_user, self.end_user)()
+    
     def preprocess(self, user_id):
         import time
-        self.exist = set(self.mat.indices[j] for j in range(self.mat.indptr[user_id], self.mat.indptr[user_id + 1]))
+        self.exist = set(self.mat.indices[j] + 1 for j in range(self.mat.indptr[user_id], self.mat.indptr[user_id + 1]))
 
         self.user_id = user_id
         delta_ruis_u = torch.exp(self.delta_ruis[user_id]).detach().numpy()
@@ -104,79 +106,14 @@ class Sampled_Iterator(IterableDataset):
         self.sample_prob[self.num_subspace-1] = torch.tensor(kk_mtx)
         for i in range(self.num_subspace-2, -1, -1):
             r_centers = torch.exp(self.center_scores[i][user_id]).unsqueeze(-1).detach().numpy()
+            # print('!!!!!!  ',i)
             kk_mtx = np.matmul(kk_mtx, r_centers).squeeze(-1)
             self.sample_prob[i] = torch.tensor(kk_mtx)
 
 
-    def __sampler__(self, user_id, pos_id):
+    def __sampler__(self, user_id):
         def sample():
             idx = []
-            probs = 1.0
-            for i in range(self.num_subspace):
-                sample_probs = self.sample_prob[i]
-                if len(idx) > 0:
-                    for history_cluster in idx:
-                        sample_probs = sample_probs[history_cluster]
-                extra = sample_probs.squeeze()
-                total_score = self.center_scores[i][self.user_id] + torch.log(extra)
-                idx_cluster, estimate_par = self.sample_from_gumbel_noise(total_score)
-                idx.append(idx_cluster)
-                probs *= total_score[idx_cluster] / torch.exp(torch.negative(estimate_par))
-            
-            # sample from the final items
-            index_combine_cluster = 0
-            for ii in idx:
-                index_combine_cluster = index_combine_cluster * self.num_cluster + ii
-            items_index = self.items_in_combine_cluster[index_combine_cluster]
-            rui_items = self.delta_ruis[self.user_id][items_index]
-            item_sample_index, estimate_par = self.sample_from_gumbel_noise(rui_items)
-            probs *= rui_items[item_sample_index] / torch.exp(torch.negative(estimate_par))
-            return items_index[item_sample_index], probs
-        return sample, self.exist
-
-    def negative_sampler(self, neg):
-        def sample_negative(user_id, pos_id):
-            sample, exist_ = self.__sampler__(user_id, pos_id)
-            k, p = sample()
-            while k in exist_:
-                k, p = sample()
-            return k, p
-
-        def generate_tuples():
-            for i in np.random.permutation(self.num_users):
-                self.preprocess(i)
-                # print('user id : ', i, ', num_rated_item : ', len(self.exist))
-                for j in self.exist:
-                    neg_item = [0] * neg
-                    prob = [0.] * neg
-                    for o in range(neg):
-                        neg_item[o], prob[o] = sample_negative(i, j)
-                    # yield ([i], [j], neg_item, prob), 1
-                    yield torch.LongTensor([i]), torch.LongTensor([j]), torch.LongTensor(neg_item), torch.Tensor(prob)
-        return generate_tuples
-    
-    def sample_gumbel_noise(self, inputs,eps=1e-7):
-        u = torch.rand(inputs.shape)
-        return -torch.log(eps - torch.log(u + eps))
-    
-    def sample_from_gumbel_noise(self, scores):
-        return torch.argmax(scores  + self.sample_gumbel_noise(scores)), torch.max(scores + self.sample_gumbel_noise(scores))
-
-
-class Fast2_Sampler_Loader(Sampled_Iterator):
-    def __init__(self, mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg):
-        super(Fast2_Sampler_Loader, self).__init__(mat, user_embs, item_embs, num_subspace, cluster_dim, num_cluster, num_neg)
-        self.start_user  = 0
-        self.end_user = self.num_users
-        print(mat.nnz)
-
-    def __iter__(self):
-        return self.negative_sampler(self.num_neg, self.start_user, self.end_user)()
-    
-    def __sampler__(self, user_id, pos_id):
-        def sample():
-            idx = []
-            probs = []
             start_flag = True
             for i in range(self.num_subspace):
                 sample_probs = self.sample_prob[i]
@@ -186,58 +123,50 @@ class Fast2_Sampler_Loader(Sampled_Iterator):
                         sample_probs = sample_probs[history_cluster]
                 extra = sample_probs.squeeze()
                 total_score = self.center_scores[i][self.user_id] + torch.log(extra)
-                idx_clusters, estimate_par = self.sample_from_gumbel_noise(total_score, start_flag)
+                idx_clusters = self.sample_from_gumbel_noise(total_score, start_flag)
                 idx.append(idx_clusters)
-                if start_flag:
-                    new_prob =  torch.exp(total_score[idx_clusters]) * torch.exp(torch.negative(estimate_par.values))
-                else:
-                    row_idx = torch.LongTensor([x for x in range(self.num_neg)])
-                    new_prob = torch.exp(total_score[row_idx,idx_clusters]) * torch.exp(torch.negative(estimate_par.values))
-                probs.append(new_prob)
-            
-            fprobs = torch.mul(probs[0], probs[1])
+
             # sample from the final items
-            
             items = []
-            final_probs = []
             i = 0
             while True:
                 index_combine_cluster = idx[0][i] * self.num_cluster + idx[1][i]
                 items_index = self.items_in_combine_cluster[index_combine_cluster]
                 if len(items_index) == 1:
                     items.append(items_index[0])
-                    final_probs.append(fprobs[i])
                 elif len(items_index) < 1:
                     continue
                 else:
                     rui_items = self.delta_ruis[self.user_id][items_index]
-                    item_sample_index, estimate_par = self.sample_from_gumbel_noise(rui_items)
-                    delta_probs = torch.exp(rui_items[item_sample_index]) * torch.exp(torch.negative(estimate_par.values))
-                    items.append(items_index[item_sample_index])
-                    final_probs.append(fprobs[i] * delta_probs)
-                
+                    item_sample_index = self.sample_from_gumbel_noise(rui_items)
+                    items.append(items_index[item_sample_index] + 1)
                 i += 1
                 
                 # print(i, self.num_neg-1)
                 if i > (self.num_neg-1):
                     break
-            return items, final_probs
+            # import pdb; pdb.set_trace()
+            return items
         return sample
 
     def negative_sampler(self, neg, start_id, end_id):
-        def sample_negative(user_id, pos_id):
-            sample = self.__sampler__(user_id, pos_id)
-            k, p = sample()
-            return k, p
+        def sample_negative(user_id):
+            sample = self.__sampler__(user_id)
+            k = sample()
+            return k
 
         def generate_tuples():
             for i in np.random.permutation(range(start_id, end_id)):
                 self.preprocess(i)
                 # print('user id : ', i, ', num_rated_item : ', len(self.exist))
-                for j in self.exist:
-                    # print('num_samples : ', self.num_neg)
-                    neg_item, probs = sample_negative(i, j)
-                    yield torch.LongTensor([i]), torch.LongTensor([j]), torch.LongTensor(neg_item), torch.Tensor(probs)
+                # j = self.exist
+                # import pdb; pdb.set_trace()
+                # for j in self.exist:
+                #     # print('num_samples : ', self.num_neg)
+                #     neg_item, probs = sample_negative(i, j)
+                #     yield torch.LongTensor([i]), torch.LongTensor([j]), torch.LongTensor(neg_item), torch.Tensor(probs)
+                neg_item = sample_negative(i)
+                yield i, list(self.exist), neg_item
         return generate_tuples
 
     def sample_gumbel_noise(self, inputs,eps=1e-7, start_flag=False):
@@ -250,11 +179,30 @@ class Fast2_Sampler_Loader(Sampled_Iterator):
     def sample_from_gumbel_noise(self, scores, start_flag=False):
         if start_flag:
             tmp = scores.unsqueeze(-1) + self.sample_gumbel_noise(scores, start_flag=True)
-            return torch.argmax(tmp, dim=0), torch.max(tmp, dim=0)
+            return torch.argmax(tmp, dim=0)
         else:
             tmp = scores + self.sample_gumbel_noise(scores)
-            return torch.argmax(tmp, dim=-1), torch.max(tmp, dim=-1)
+            return torch.argmax(tmp, dim=-1)
         
+
+def get_max_length(x):
+    return len(max(x, key=len))
+
+def pad_sequence(seq):
+    def _pad(_it, _max_len):
+        return _it + [0] * (_max_len - len(_it))
+    return [_pad(it, get_max_length(seq)) for it in seq]
+
+def custom_collate(batch):
+    transposed = zip(*batch)
+    lst = []
+    for samples in transposed:
+        this_type_sample = type(samples[0])
+        if this_type_sample in [np.int, np.int32, np.int64]:
+               lst.append(torch.LongTensor(samples))
+        else:
+            lst.append(torch.LongTensor(pad_sequence(samples)))
+    return lst
 
 
 def worker_init_fn(worker_id):
@@ -269,22 +217,22 @@ def worker_init_fn(worker_id):
      dataset.end_user = min(dataset.start_user + per_worker, overall_end)
 
 if __name__ == "__main__":
-    data = RecData('ml100kdata.mat')
+    data = RecData('datasets','ml100kdata.mat')
     train, test = data.get_data(0.8)
     # print(train.shape, test.shape)
     user_num, item_num = train.shape
     user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
 
     # test_iter = Sampled_Iterator(train[:500], user_emb, item_emb, 2, 6, 32, 5)
-    test_iter = Fast_Sampler_Loader(train[:500], user_emb, item_emb, 2, 6, 32, 5)
-    test_dataloader = DataLoader(test_iter, batch_size=1024, num_workers=4, worker_init_fn=worker_init_fn)
+    test_iter = Fast2_Sampler_Loader(train[:500], user_emb, item_emb, 2, 6, 32, 5)
+    test_dataloader = DataLoader(test_iter, batch_size=10, num_workers=8, worker_init_fn=worker_init_fn, collate_fn=custom_collate)
     import time
     tmp = time.time()
     t0 = tmp
     data_len = 0
     for idx, x in enumerate(test_dataloader):
-        data_len += len(x[0])
-        # import pdb; pdb.set_trace()
+        import ipdb; ipdb.set_trace()
+        # data_len += len(x[0])
         if (idx % 5) < 1:
             tt = time.time()
             print(idx, tt-tmp)

@@ -9,7 +9,7 @@ from typing import List
 
 class Eval:
     @staticmethod
-    def evaluate_item(train:ss.csr_matrix, test:ss.csr_matrix, user:np.ndarray, item:np.ndarray, topk:int=200, cutoff:int=200):
+    def evaluate_item(train:ss.csr_matrix, test:ss.csr_matrix, user:np.ndarray, item:np.ndarray, topk:int=50, cutoff:int=50):
         train = train.tocsr()
         test = test.tocsr()
         idx = np.squeeze((test.sum(axis=1) > 0).A)

@@ -48,20 +48,63 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
-def compute_loss(pos_ratings, partition_ratings, probs = None):
-    part = torch.cat((pos_ratings, partition_ratings), dim=-1)
-    if probs is not None:
-        prob_softmax = probs.detach()
-    else:
-        prob_softmax = F.softmax(part, dim=-1).detach()
-    neg_rat = torch.sum(prob_softmax * part,dim=-1).unsqueeze(-1)
-    # import pdb; pdb.set_trace()
-    return -(pos_ratings - neg_rat).mean()
+
+def get_max_length(x):
+    return len(max(x, key=len))
+
+def pad_sequence(seq):
+    def _pad(_it, _max_len):
+        return _it + [0] * (_max_len - len(_it))
+    return [_pad(it, get_max_length(seq)) for it in seq]
+
+def custom_collate(batch):
+    transposed = zip(*batch)
+    lst = []
+    for samples in transposed:
+        this_type_sample = type(samples[0])
+        if this_type_sample in [np.int, np.int32, np.int64]:
+               lst.append(torch.LongTensor(samples))
+        else:
+            lst.append(torch.LongTensor(pad_sequence(samples)))
+    return lst
+
+
+def worker_init_fn(worker_id):
+     worker_info = torch.utils.data.get_worker_info()
+     dataset = worker_info.dataset  # the dataset copy in this worker process
+     overall_start = dataset.start_user
+     overall_end = dataset.end_user
+     # configure the dataset to only process the split workload
+     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
+     worker_id = worker_info.id
+     dataset.start_user = overall_start + worker_id * per_worker
+     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
+
+def worker_init_fn(worker_id):
+     worker_info = torch.utils.data.get_worker_info()
+     dataset = worker_info.dataset  # the dataset copy in this worker process
+     overall_start = dataset.start_user
+     overall_end = dataset.end_user
+     # configure the dataset to only process the split workload
+     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
+     worker_id = worker_info.id
+     dataset.start_user = overall_start + worker_id * per_worker
+     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
 
 # def compute_loss(pos_ratings, partition_ratings, probs = None):
-#     return (-pos_ratings + torch.log(torch.sum(torch.exp(partition_ratings), dim=-1)).unsqueeze(-1)).sum()
+#     part = torch.cat((pos_ratings, partition_ratings), dim=-1)
+#     if probs is not None:
+#         prob_softmax = probs.detach()
+#     else:
+#         prob_softmax = F.softmax(part, dim=-1).detach()
+#     neg_rat = torch.sum(prob_softmax * part,dim=-1).unsqueeze(-1)
+#     return -(pos_ratings - neg_rat).mean()
 
-
+def compute_loss(pos_ratings, partition_ratings):
+    expected_rat = partition_ratings.mean(dim=-1).unsqueeze(-1)
+    mask = (pos_ratings!=0)
+    res = (- pos_ratings + expected_rat) * mask
+    return res.mean()
 
 def evaluate(model, train_mat, test_mat, config, logger):
     logger.info("Start evaluation")
@@ -76,18 +119,6 @@ def evaluate(model, train_mat, test_mat, config, logger):
     
     return m
 
-def worker_init_fn(worker_id):
-     worker_info = torch.utils.data.get_worker_info()
-     dataset = worker_info.dataset  # the dataset copy in this worker process
-     overall_start = dataset.start_user
-     overall_end = dataset.end_user
-     # configure the dataset to only process the split workload
-     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
-     worker_id = worker_info.id
-     dataset.start_user = overall_start + worker_id * per_worker
-     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
-
-
 
 def train_model(model, train_mat, test_mat, config, logger):
     optimizer = utils_optim(config, model)
@@ -98,17 +129,13 @@ def train_model(model, train_mat, test_mat, config, logger):
 
         user_emb, item_emb = model.get_uv()
         train_data = Fast2_Sampler_Loader(train_mat, user_emb, item_emb, config.subspace_num, config.cluster_dim, config.cluster_num, config.sample_num)
-        train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=worker_init_fn)
+        train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=worker_init_fn, collate_fn=custom_collate)
         logging.info('Finish Sampling, Start training !!!')
         
         t0 = time.time()
         for batch_idx, data in enumerate(train_dataloader):
             model.train()
-            # b = time.time()
-            # print('Batch ', batch_idx, ' time : ', b-t0)
-            # t0 = b
-            user_id, pos_id, neg_id, probs = data
-            # import pdb; pdb.set_trace()
+            user_id, pos_id, neg_id = data
             optimizer.zero_grad()
             pos_rat, neg_rat = model(user_id, pos_id, neg_id)
             loss = compute_loss(pos_rat, neg_rat)
@@ -118,8 +145,8 @@ def train_model(model, train_mat, test_mat, config, logger):
             loss += kl_divergence
             loss.backward()
             optimizer.step()
-            if (batch_idx % 50) == 0:
-                logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
+            # if (batch_idx % 50) == 0:
+            logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
         
         if (epoch % 5) == 0:
             result = evaluate(model, train_mat, test_mat, config, logger)
@@ -171,7 +198,7 @@ if __name__ == "__main__":
     # parser.add_argument('--res_dim', default=0, type=int, help='residual dimension latent_dim - subspace_num * cluster_dim')
     parser.add_argument('--encode_subspace', default=2, type=int, help='the subspace for user encoding')
     parser.add_argument('--encode_cluster', default=48, type=int, help='the number of clusters for user encoding')
-    parser.add_argument('-b', '--batch_size', default=2048, type=int, help='the batch size for training')
+    parser.add_argument('-b', '--batch_size', default=16, type=int, help='the batch size for training')
     parser.add_argument('-e','--epoch', default=20, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
     parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help='the learning rate for training')
@@ -181,6 +208,7 @@ if __name__ == "__main__":
     parser.add_argument('--user_quatized', default=False, type=bool, help='whether to quantize the user embeddings')
     parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for dataloader')
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
+    parser.add_argument('--device')
 
 
     config = parser.parse_args()
