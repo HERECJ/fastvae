@@ -101,10 +101,36 @@ class VAE_CF(BaseVAE):
             return self._kl_gaussian(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
         
     def get_uv(self):
-        u_user = self.reparameterize(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
-        v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        # u_user = self.reparameterize(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
+        # v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        u_user = self._User_Embedding_mu.weight
+        v_item = self._Item_Embedding_mu.weight
         return u_user, v_item
-    
+
+# class Base_VAECF(VAE_CF):
+#     def forward(self, user_id, user_history):
+#         user_history = user_history.squeeze(dim=1)
+#         user_vecs = self.encode_user(user_id)
+#         all_items = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+#         kk = torch.matmul(user_vecs, all_items.T)
+#         scores = torch.negative(F.log_softmax(kk, dim=-1))
+#         return user_history * scores
+        
+class Base_VAECF(VAE_CF):
+    def forward(self, user_id, user_history):
+        user_history = user_history.squeeze(dim=1)
+        user_vecs = self.encode_user(user_id)
+        all_items = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        
+        # norm
+        user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        user_vecs = user_vecs / user_vecs_scale
+
+        all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        all_items = all_items / all_items_scale
+        kk = torch.matmul(user_vecs, all_items.T)
+        scores = torch.negative(F.log_softmax(kk, dim=-1))
+        return user_history * scores
 
 class QVAE_CF(VAE_CF):
     """
@@ -211,7 +237,8 @@ class QVAE_CF(VAE_CF):
         return (h1 - h2).sum()
     
     def get_uv(self):
-        v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        # v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        v_item = self._Item_Embedding_mu
         user_idx_array = torch.LongTensor([i for i in range(self.num_user)])
         u_user, _ = self.encode_user(user_idx_array)
         return u_user, v_item
