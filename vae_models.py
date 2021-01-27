@@ -6,29 +6,43 @@ import math
 from sklearn.cluster import KMeans
 
 class BaseVAE(nn.Module):
-    def __init__(self):
+    def __init__(self, num_user, num_item, latent_dim, **kwargs):
         super(BaseVAE, self).__init__()
-    
+        self.num_user = num_user
+        self.num_item = num_item
+        self.latent_dim = latent_dim
+
+        self._User_Embedding_mu = nn.Embedding(self.num_user, self.latent_dim)
+        self._User_Embedding_logvar = nn.Embedding(self.num_user, self.latent_dim)
+
+        self._Item_Embedding = nn.Embedding(self.num_item, self.latent_dim)
+
     def encode_user(self, user_id):
-        # return input
-        raise NotImplementedError
+        return self.reparameterize(self._User_Embedding_mu(user_id), self._User_Embedding_logvar(user_id))
 
-    def encode_item(self, item_id):
-        raise NotImplementedError
-    
-    def decode(self, input):
-        # return input
-        raise NotImplementedError
+    def forward(self, user_id, user_history, neg_id, **kawargs):
+        user_history = user_history.squeeze(dim=1)
+        user_vecs = self.encode_user(user_id)
+        all_items = self._Item_Embedding.weight
+        
+        # norm
+        # user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        # user_vecs = user_vecs / user_vecs_scale
 
-    def forward(self, *input):
-        pass
+        # all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        # all_items = all_items / all_items_scale
+        kk = torch.matmul(user_vecs, all_items.T)
+        # scores = torch.negative(F.log_softmax(kk, dim=-1))
+        return kk, kk
 
     def klv_loss(self):
-        pass
+        return self._kl_gaussian(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
 
     def get_uv(self):
         # Obtain the latent matrix of users and items
-        raise NotImplementedError
+        u_user = self._User_Embedding_mu.weight
+        v_item = self._Item_Embedding.weight
+        return u_user, v_item
 
     def reparameterize(self, mu, logvar):
         """
@@ -52,86 +66,29 @@ class VAE_CF(BaseVAE):
     The Model depending on real values of user and item vectors
     """
     def __init__(self, num_user, num_item, latent_dim, **kwargs):
-        super(VAE_CF, self).__init__()
-        self.num_user = num_user
-        self.num_item = num_item
-        self.latent_dim = latent_dim
-
-        self._User_Embedding_mu = nn.Embedding(self.num_user, self.latent_dim)
-        self._User_Embedding_logvar = nn.Embedding(self.num_user, self.latent_dim)
-
-        self._Item_Embedding_mu = nn.Embedding(self.num_item + 1, self.latent_dim)
-        self._Item_Embedding_logvar = nn.Embedding(self.num_item + 1, self.latent_dim)
+        super(VAE_CF, self).__init__(num_user, num_item, latent_dim)
     
     def encode_user(self, user_id):
         return self.reparameterize(self._User_Embedding_mu(user_id), self._User_Embedding_logvar(user_id))
     
-    def encode_item(self, item_id):
-        return self.reparameterize(self._Item_Embedding_mu(item_id), self._Item_Embedding_logvar(item_id))
-    
-    # def forward(self, user_id, item_id):
-        # user_vecs = self.encode_user(user_id)
-        # item_vecs = self.encode_item(item_id)
-        # return (user_vecs * item_vecs).sum(-1)
-    def forward(self, user_id, pos_id, neg_ids):
-        mask = (pos_id!=0).unsqueeze(dim=-1)
-        user_vecs = self.encode_user(user_id).unsqueeze(dim=1)
-        pos_items = self.encode_item(pos_id) * mask
-        neg_items = self.encode_item(neg_ids)
-        return (user_vecs * pos_items).sum(-1), (user_vecs * neg_items).sum(-1) 
-    
-
-    def klv_loss(self):
-        """
-        Compute the KLV for user embedding and user embedding respectively
-
-        Return: kl_user, kl_item
-        """
-        return self.klv(mode=0), self.klv(mode=1)
-
-    def klv(self, mode=0):
-        """
-        Compute the KL divergence loss according to Gaussian distributions
-
-        mode: 0 for user embeddings
-        mode: 1 for item embeddings
-        """
-        if mode < 1:
-            return self._kl_gaussian(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
-        else:
-            return self._kl_gaussian(self._Item_Embedding_mu.weight[1:], self._Item_Embedding_logvar.weight[1:])
-        
-    def get_uv(self):
-        # u_user = self.reparameterize(self._User_Embedding_mu.weight, self._User_Embedding_logvar.weight)
-        # v_item = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
-        u_user = self._User_Embedding_mu.weight
-        v_item = self._Item_Embedding_mu.weight[1:]
-        return u_user, v_item
-
-# class Base_VAECF(VAE_CF):
-#     def forward(self, user_id, user_history):
-#         user_history = user_history.squeeze(dim=1)
-#         user_vecs = self.encode_user(user_id)
-#         all_items = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
-#         kk = torch.matmul(user_vecs, all_items.T)
-#         scores = torch.negative(F.log_softmax(kk, dim=-1))
-#         return user_history * scores
-        
-class Base_VAECF(VAE_CF):
-    def forward(self, user_id, user_history):
-        user_history = user_history.squeeze(dim=1)
+    def forward(self, user_id, user_history, neg_ids):
         user_vecs = self.encode_user(user_id)
-        all_items = self.reparameterize(self._Item_Embedding_mu.weight, self._Item_Embedding_logvar.weight)
+        all_items = self._Item_Embedding.weight
         
         # norm
-        user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        user_vecs = user_vecs / user_vecs_scale
+        # user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        # user_vecs = user_vecs / user_vecs_scale
 
-        all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        all_items = all_items / all_items_scale
+        # all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        # all_items = all_items / all_items_scale
         kk = torch.matmul(user_vecs, all_items.T)
-        scores = torch.negative(F.log_softmax(kk, dim=-1))
-        return user_history * scores
+        
+        neg_vecs = self._Item_Embedding(neg_ids)
+        neg_vecs_scale = ((neg_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        neg_vecs = neg_vecs / neg_vecs_scale
+
+        return user_history * kk, (user_vecs.unsqueeze(1) * neg_vecs).sum(-1) 
+
 
 class QVAE_CF(VAE_CF):
     """

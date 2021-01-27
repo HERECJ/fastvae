@@ -7,6 +7,7 @@ import random
 import numpy as np
 from typing import List
 
+
 class Eval:
     @staticmethod
     def evaluate_item(train:ss.csr_matrix, test:ss.csr_matrix, user:np.ndarray, item:np.ndarray, topk:int=50, cutoff:int=50):

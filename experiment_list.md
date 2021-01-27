@@ -10,13 +10,13 @@ Data format: **{data_name}.mat**, usually the sparse matrix
 + Amazon
 
 ## Baselines
-+ VAE-CF [Variational Autoencoders for Collaborative Filtering]
++ **VAE-CF [Variational Autoencoders for Collaborative Filtering]** the highest prior
 + NeuHash-CF [Content-aware Neural Hashing for Cold-start Recommendation]
 + Other sampling method
 <!-- + NCF [Neural collaborative filtering] -->
 
 **Our Methods**
-+ No quantized vectors/ Real values of vectors
++ No quantized vectors/ Real values of vectors (vae, user_quatized=False) **Prior**
 + Quantized User Embeddings
 
 ## Baseline Experiment
