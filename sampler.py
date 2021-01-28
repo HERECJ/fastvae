@@ -17,6 +17,8 @@ class SamplerUserModel:
         self.mat = mat.tocsr()
         self.num_users, self.num_items = mat.shape
         self.num_neg = num_neg
+        self.user_embs = user_embs.cpu().data
+        self.item_embs = item_embs.cpu().data
 
     def preprocess(self, user_id):
         self.exist = set(self.mat.indices[j] for j in range(self.mat.indptr[user_id], self.mat.indptr[user_id + 1]))
@@ -238,7 +240,7 @@ class SoftmaxApprSampler(SamplerUserModel):
                         sample_probs = sample_probs[history_cluster]
                 extra = sample_probs.squeeze()
                 total_score = self.center_scores[i][self.user_id] + torch.log(extra)
-                idx_clusters, _ = self.sample_func(total_score, start_flag=start_flag, mode=1)
+                idx_clusters, _ = self.sample_func(total_score, start_flag=start_flag, mode=0)
                 idx.append(idx_clusters)
                 p = self.center_scores[i][self.user_id][idx_clusters]
                 probs.append(p)
@@ -283,7 +285,7 @@ class SoftmaxApprSampler(SamplerUserModel):
                 uid_emb = self.user_embs[i]
                 user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
                 ruis = torch.matmul(uid_emb, self.item_embs.T) * user_his
-                yield i, user_his, ruis/self.num_items, torch.LongTensor(neg_item), torch.tensor(prob)/self.num_items
+                yield i, user_his, ruis, torch.LongTensor(neg_item), torch.tensor(prob)
         return generate_tuples
 
 
