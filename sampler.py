@@ -285,7 +285,7 @@ class SoftmaxApprSampler(SamplerUserModel):
                 uid_emb = self.user_embs[i]
                 user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
                 ruis = torch.matmul(uid_emb, self.item_embs.T) * user_his
-                yield i, user_his, ruis, torch.LongTensor(neg_item), torch.tensor(prob)
+                yield i, user_his, ruis/self.num_items, torch.LongTensor(neg_item), torch.tensor(prob)/self.num_items
         return generate_tuples
 
 
