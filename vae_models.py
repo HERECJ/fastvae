@@ -26,11 +26,11 @@ class BaseVAE(nn.Module):
         all_items = self._Item_Embedding.weight
         
         # norm
-        # user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        # user_vecs = user_vecs / user_vecs_scale
+        user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        user_vecs = user_vecs / user_vecs_scale
 
-        # all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        # all_items = all_items / all_items_scale
+        all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        all_items = all_items / all_items_scale
         kk = torch.matmul(user_vecs, all_items.T)
         # scores = torch.negative(F.log_softmax(kk, dim=-1))
         return kk, kk
@@ -76,11 +76,11 @@ class VAE_CF(BaseVAE):
         all_items = self._Item_Embedding.weight
         
         # norm
-        # user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        # user_vecs = user_vecs / user_vecs_scale
+        user_vecs_scale = ((user_vecs **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        user_vecs = user_vecs / user_vecs_scale
 
-        # all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
-        # all_items = all_items / all_items_scale
+        all_items_scale = ((all_items **2) + 1e-8).sum(-1, keepdim=True).sqrt()
+        all_items = all_items / all_items_scale
         kk = torch.matmul(user_vecs, all_items.T)
         
         neg_vecs = self._Item_Embedding(neg_ids)

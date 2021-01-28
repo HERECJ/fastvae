@@ -17,6 +17,8 @@ class SamplerUserModel:
         self.mat = mat.tocsr()
         self.num_users, self.num_items = mat.shape
         self.num_neg = num_neg
+        self.user_embs = user_embs = user_embs.cpu().data
+        self.item_embs = item_embs = item_embs.cpu().data
 
     def preprocess(self, user_id):
         self.exist = set(self.mat.indices[j] for j in range(self.mat.indptr[user_id], self.mat.indptr[user_id + 1]))
@@ -36,7 +38,10 @@ class SamplerUserModel:
             for i in np.random.permutation(range(start_id, end_id)):
                 self.preprocess(i)
                 neg_item, prob = sample_negative(i)
-                yield i, torch.tensor(self.mat[i].toarray()[0].tolist()), torch.LongTensor(neg_item), torch.tensor(prob)
+                # uid_emb = self.user_embs[i]
+                user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
+                # ruis = torch.matmul(uid_emb, self.item_embs.T) * user_his
+                yield i, user_his, torch.zeros(self.num_items), torch.LongTensor(neg_item), torch.tensor(prob)
         return generate_tuples
 
 class PopularSamplerModel(SamplerUserModel):
@@ -142,20 +147,25 @@ class SoftmaxApprSampler(SamplerUserModel):
         if start_flag:
             tmp = scores.unsqueeze(-1) + self.sample_gumbel_noise(scores, start_flag=True)
             max_class = torch.max(tmp, dim=0)
-            return max_class.indices, torch.exp(scores[max_class.indices]) * torch.exp(torch.negative(max_class.values))
+            # return max_class.indices, torch.exp(scores[max_class.indices]) * torch.exp(torch.negative(max_class.values))
+            return max_class.indices, tmp[max_class.indices]
         else:
             tmp = scores + self.sample_gumbel_noise(scores)
             max_class = torch.max(tmp, dim=-1)
-            return max_class.indices, (torch.exp(torch.gather(scores, 1, max_class.indices.unsqueeze(0))) * torch.exp(torch.negative(max_class.values))).squeeze(dim=0)
+            # return max_class.indices, (torch.exp(torch.gather(scores, 1, max_class.indices.unsqueeze(0))) * torch.exp(torch.negative(max_class.values))).squeeze(dim=0)
+            return max_class.indices, torch.gather(tmp, 1, max_class.indices.unsqueeze(0))
+
     
     def sample_from_weighted(self, scores, start_flag=False):
         probs = F.softmax(scores, dim=-1)
         if start_flag is True:
             sampled_items = torch.multinomial(probs, self.num_neg, replacement=True)
-            return sampled_items, probs[sampled_items]
+            # return sampled_items, probs[sampled_items]
+            return sampled_items, scores[sampled_items]
         else:
             sampled_items = torch.multinomial(probs, 1, replacement=True)
-            return sampled_items.squeeze(-1), torch.gather(probs, 1, sampled_items).squeeze(-1)
+            # return sampled_items.squeeze(-1), torch.gather(probs, 1, sampled_items).squeeze(-1)
+            return sampled_items.squeeze(-1), torch.gather(scores, 1, sampled_items).squeeze(-1)
             
 
     def sample_func(self, scores, mode=0, start_flag=False, eps=1e-8):
@@ -171,7 +181,8 @@ class SoftmaxApprSampler(SamplerUserModel):
         us = torch.rand(scores.shape)
         tmp = scores - torch.log(- torch.log(us + eps) + eps)
         max_class = torch.max(tmp, dim=0)
-        return max_class.indices, torch.exp(scores[max_class.indices]) * torch.exp(torch.negative(max_class.values))
+        # return max_class.indices, torch.exp(scores[max_class.indices]) * torch.exp(torch.negative(max_class.values))
+        return max_class.indices, tmp[max_class.indices]
 
         
 
@@ -188,12 +199,14 @@ class SoftmaxApprSampler(SamplerUserModel):
                         sample_probs = sample_probs[history_cluster]
                 extra = sample_probs.squeeze()
                 total_score = self.center_scores[i][self.user_id] + torch.log(extra)
-                idx_clusters, p = self.sample_func(total_score, start_flag=start_flag)
+                idx_clusters, _ = self.sample_func(total_score, start_flag=start_flag)
                 idx.append(idx_clusters)
+                p = self.center_scores[i][self.user_id][idx_clusters]
                 probs.append(p)
 
             # sample from the final items
-            fprobs = torch.mul(probs[0], probs[1])
+            # fprobs = torch.mul(probs[0], probs[1])
+            fprobs = probs[0] +  probs[1]
             items = []
             final_probs = []
             i = 0
@@ -207,15 +220,32 @@ class SoftmaxApprSampler(SamplerUserModel):
                     continue
                 else:
                     rui_items = self.delta_ruis[self.user_id][items_index]
-                    item_sample_index, p = self.sample_final_items(rui_items)
+                    item_sample_index, _ = self.sample_final_items(rui_items)
                     items.append(items_index[item_sample_index])
-                    final_probs.append(fprobs[i] * p)
+                    p = rui_items[item_sample_index]
+                    final_probs.append(fprobs[i] + p)
 
                 i += 1
                 if i > (self.num_neg-1):
                     break
             return items, final_probs
         return sample
+    
+    def negative_sampler(self, start_id, end_id):
+        def sample_negative(user_id):
+            sample = self.__sampler__(user_id)
+            k, p = sample()
+            return k, p
+
+        def generate_tuples():
+            for i in np.random.permutation(range(start_id, end_id)):
+                self.preprocess(i)
+                neg_item, prob = sample_negative(i)
+                uid_emb = self.user_embs[i]
+                user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
+                ruis = torch.matmul(uid_emb, self.item_embs.T) * user_his
+                yield i, user_his, ruis, torch.LongTensor(neg_item), torch.tensor(prob)
+        return generate_tuples
 
 
 # class ExactSamplerModel(SamplerUserModel):
@@ -400,30 +430,31 @@ if __name__ == "__main__":
     user_num, item_num = train.shape
 
     user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
-    sampler = SoftmaxApprSampler(train[:1], 100000, user_emb, item_emb, 2, 6, 16)
+    # sampler = SoftmaxApprSampler(train[:1], 100000, user_emb, item_emb, 2, 6, 16)
+    sampler = SamplerUserModel(train[:1], 100000, user_emb, item_emb, 2, 6, 16)
 
     train_sample = Sampler_Dataset(sampler)
     train_dataloader = DataLoader(train_sample, batch_size=16, num_workers=8,worker_init_fn=worker_init_fn)
     b = 0
     for idx, data in enumerate(train_dataloader):
-        user_id, user_his, neg_id, prob = data
+        user_id, user_his, ruis, neg_id, prob = data
 
-        uid = user_id[0]
-        u_emb = user_emb[uid,:]
-        scores = torch.matmul(u_emb, item_emb.T).squeeze(dim=0)
-        probs = F.softmax(scores, dim=-1).numpy()
-        probs_str = ['%s : %.5f' % (i ,probs[i]) for i in range(len(probs))]
-        print(' '.join(probs_str))
-        print('\n')
+        # uid = user_id[0]
+        # u_emb = user_emb[uid,:]
+        # scores = torch.matmul(u_emb, item_emb.T).squeeze(dim=0)
+        # probs = F.softmax(scores, dim=-1).numpy()
+        # probs_str = ['%s : %.5f' % (i ,probs[i]) for i in range(len(probs))]
+        # print(' '.join(probs_str))
+        # print('\n')
 
-        count_arr = np.zeros(item_num, np.float)
-        for item in neg_id[0]:
-            count_arr[item] += 1
-        count_str =  ['%s : %d' % (i ,count_arr[i]) for i in range(len(count_arr))]
-        print(' '.join(count_str))
-        print('\n')
-        count_arr = count_arr / np.sum(count_arr)
-        count_str =  ['%s : %.5f' % (i ,count_arr[i]) for i in range(len(count_arr))]
-        print(' '.join(count_str))
-        import pdb; pdb.set_trace()
+        # count_arr = np.zeros(item_num, np.float)
+        # for item in neg_id[0]:
+        #     count_arr[item] += 1
+        # count_str =  ['%s : %d' % (i ,count_arr[i]) for i in range(len(count_arr))]
+        # print(' '.join(count_str))
+        # print('\n')
+        # count_arr = count_arr / np.sum(count_arr)
+        # count_str =  ['%s : %.5f' % (i ,count_arr[i]) for i in range(len(count_arr))]
+        # print(' '.join(count_str))
+        # import pdb; pdb.set_trace()
         b = b + 1

@@ -65,7 +65,7 @@ class UserItemData(Dataset):
     
     def __getitem__(self, idx):
         # return self.user[idx], self.item[idx]
-        return self.users[idx], torch.tensor(self.train[self.users[idx]].toarray()), 0, 0
+        return self.users[idx], torch.tensor(self.train[self.users[idx]].toarray()), 0, 0, 0
 
 class Sampler_Dataset(IterableDataset):
     def __init__(self,sample_class):

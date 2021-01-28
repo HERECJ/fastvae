@@ -64,20 +64,41 @@ def worker_init_fn(worker_id):
     dataset.start_user = overall_start + worker_id * per_worker
     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
 
-def compute_loss(user_his, pos_rats, part_rats, loss_mode=0, reduction=True, prob_neg=None):
+def compute_loss(user_his, prob_pos, pos_rats, part_rats, prob_neg=None,reduction=False, loss_mode=0):
     if loss_mode == 0 :
         user_his = user_his.squeeze(dim=1)
         item_logits = torch.negative(F.log_softmax(part_rats, dim=-1))
         scores = (user_his * item_logits).sum(-1)
     elif loss_mode == 1:
-        expected_rat = torch.cat((pos_rats, part_rats), dim=1)
+        # Do not sub rated items from the sampled items
+        probs = F.softmax( part_rats - prob_neg, dim=-1).detach()
+        final = torch.sum(probs * part_rats).unsqueeze(-1)
+        scores = ((- pos_rats + final) * user_his).sum(-1)
+    elif loss_mode == 2:
+        # concat the rated items into the sampled items
+        only_pos = pos_rats * user_his - (1 - user_his) * 1e9
+        expected_rat = torch.cat((only_pos, part_rats), dim=1)
         probs = F.softmax(expected_rat, dim=-1).detach()
         final = torch.sum( probs * expected_rat, dim=-1).unsqueeze(-1)
         scores =  ((- pos_rats + final) * user_his).sum(-1)
-    elif loss_mode == 2:
-        expected_rat = part_rats.mean(-1).unsqueeze(-1)
-        scores = ((- pos_rats + expected_rat) * user_his).sum(-1)
 
+    # elif loss_mode == 1:
+    #     only_pos = pos_rats * user_his - (1 - user_his) * 1e9
+    #     expected_rat = torch.cat((only_pos, part_rats), dim=1)
+    #     probs = F.softmax(expected_rat, dim=-1).detach()
+    #     final = torch.sum( probs * expected_rat, dim=-1).unsqueeze(-1)
+    #     scores =  ((- pos_rats + final) * user_his).sum(-1)
+    # elif loss_mode == 2:
+    #     expected_rat = part_rats.mean(-1).unsqueeze(-1)
+    #     scores = ((- pos_rats + expected_rat) * user_his).sum(-1)
+    # elif loss_mode == 3:
+    #     new_pos = pos_rats - prob_pos.detach()
+    #     new_neg = part_rats - prob_neg.detach()
+    #     only_pos = new_pos * user_his - (1 - user_his) * 1e9
+    #     expected_rat = torch.cat((only_pos, new_neg), dim=1)
+    #     num_items = user_his.shape[1]
+    #     item_logits = torch.negative(F.log_softmax(expected_rat, dim=-1)[:,:num_items]) * user_his
+    #     scores = item_logits.sum(-1)
 
     if reduction:
         return scores.mean()
@@ -102,7 +123,8 @@ def evaluate(model, train_mat, test_mat, config, logger):
 
 def train_model(model, train_mat, test_mat, config, logger):
     sampler_list = [SamplerUserModel, PopularSamplerModel, SoftmaxApprSampler]
-    optimizer = utils_optim(config, model)
+    optimizer = utils_optim(config.learning_rate, model)
+    lr = config.learning_rate
     device = torch.device(config.device)
     for epoch in range(config.epoch):
         loss = 0
@@ -121,16 +143,16 @@ def train_model(model, train_mat, test_mat, config, logger):
             train_data = Sampler_Dataset(sampler)
             train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=worker_init_fn)        
             logging.info('Finish Sampling, Start training !!!')
-            loss_mode = 1
+            loss_mode = config.loss_mode
         
         for batch_idx, data in enumerate(train_dataloader):
             model.train()
-            user_id, user_his, neg_id, pos = data
-            user_id, user_his, neg_id, pos = user_id.to(device), user_his.to(device), neg_id.to(device), pos.to(device)
+            user_id, user_his, prob_pos, neg_id, prob_neg = data
+            user_id, user_his, prob_pos, neg_id, prob_neg = user_id.to(device), user_his.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
             optimizer.zero_grad()
             pos_rats, part_rats = model(user_id, user_his, neg_id)
             # part_rats is the denominator of the softmax function
-            loss = compute_loss(user_his, pos_rats, part_rats, loss_mode=loss_mode)
+            loss = compute_loss(user_his, prob_pos, pos_rats, part_rats, prob_neg=prob_neg, loss_mode=loss_mode)
             # kl_divergence = model.klv_loss() / (batch_idx + 1.0)
             kl_divergence = model.klv_loss() / config.batch_size
 
@@ -145,15 +167,17 @@ def train_model(model, train_mat, test_mat, config, logger):
         
         if (epoch % 5) == 0:
             result = evaluate(model, train_mat, test_mat, config, logger)
-            logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49])) 
+            logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49]))
+            lr = lr * 0.95
+            optimizer = utils_optim(lr, model)
 
 
 
-def utils_optim(config, model):
+def utils_optim(learning_rate, model):
     if config.optim=='adam':
-        return torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+        return torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.01)
     elif config.optim=='sgd':
-        return torch.optim.SGD(model.parameters(), lr=config.learning_rate)
+        return torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=0.01)
     else:
         raise ValueError('Unkown optimizer!')
         
@@ -207,7 +231,9 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=0, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: approx softmax')
+    parser.add_argument('--sampler', default=3, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: approx softmax')
+    parser.add_argument('--loss_mode', default=1, type=int, help='the loss mode for sampled items, 0: only use the sampled items, 1: the sampled items and the rated items')
+    parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
 
 
     config = parser.parse_args()
@@ -225,9 +251,13 @@ if __name__ == "__main__":
     logger = get_logger(log_file_name)
     
     logger.info(config)
-    setup_seed(config.seed)
+    if config.fix_seed:
+        setup_seed(config.seed)
     m = main(config, logger)
-    print('ndcg@5,10,50, ', m['item_ndcg'][[4,9,49]])
+    # print('ndcg@5,10,50, ', m['item_ndcg'][[4,9,49]])
+
+    logger.info('Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(m['item_ndcg'][4], m['item_ndcg'][9], m['item_ndcg'][49]))
+
     logger.info("Finish")
     svmat_name = log_file_name + '.mat'
     scipy.io.savemat(svmat_name, m)
