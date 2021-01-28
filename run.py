@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from vae_models import BaseVAE, VAE_CF, QVAE_CF
 import argparse
 from dataloader import RecData, UserItemData, Sampler_Dataset
-from sampler import SamplerUserModel, PopularSamplerModel, SoftmaxApprSampler
+from sampler import SamplerUserModel, PopularSamplerModel, SoftmaxApprSampler, ExactSamplerModel
 import numpy as np
 from utils import Eval
 import logging, coloredlogs
@@ -71,16 +71,33 @@ def compute_loss(user_his, prob_pos, pos_rats, part_rats, prob_neg=None,reductio
         scores = (user_his * item_logits).sum(-1)
     elif loss_mode == 1:
         # Do not sub rated items from the sampled items
-        probs = F.softmax( part_rats - prob_neg, dim=-1).detach()
-        final = torch.sum(probs * part_rats).unsqueeze(-1)
-        scores = ((- pos_rats + final) * user_his).sum(-1)
+        # probs = F.softmax( part_rats - prob_neg, dim=-1).detach()
+        # final = torch.sum(probs * part_rats).unsqueeze(-1)
+        # scores = ((- pos_rats + final) * user_his).sum(-1)
+        new_pos = pos_rats - prob_pos.detach()
+        new_neg = part_rats - prob_neg.detach()
+        final = torch.logsumexp(new_neg, dim=-1).unsqueeze(-1)
+        scores = ((- new_pos + final) * user_his).sum(-1)
+
     elif loss_mode == 2:
         # concat the rated items into the sampled items
-        only_pos = pos_rats * user_his - (1 - user_his) * 1e9
-        expected_rat = torch.cat((only_pos, part_rats), dim=1)
+        new_pos = pos_rats - prob_pos.detach()
+        new_neg = part_rats - prob_neg.detach()
+        only_pos = new_pos * user_his - (1 - user_his) * 1e9
+        expected_rat = torch.cat((only_pos, new_neg), dim=1)
         probs = F.softmax(expected_rat, dim=-1).detach()
+
+        expected_rat = torch.cat((pos_rats, part_rats), dim=1)
         final = torch.sum( probs * expected_rat, dim=-1).unsqueeze(-1)
         scores =  ((- pos_rats + final) * user_his).sum(-1)
+    
+    elif loss_mode == 3:
+        new_pos = pos_rats - prob_pos.detach()
+        new_neg = part_rats - prob_neg.detach()
+        only_pos = new_pos * user_his - (1 - user_his) * 1e9
+        expected_rat = torch.cat((only_pos, new_neg), dim=1)
+        final = torch.logsumexp(expected_rat, dim=-1).unsqueeze(-1)
+        scores =  ((- new_pos + final) * user_his).sum(-1)
 
     # elif loss_mode == 1:
     #     only_pos = pos_rats * user_his - (1 - user_his) * 1e9
@@ -122,12 +139,12 @@ def evaluate(model, train_mat, test_mat, config, logger):
 
 
 def train_model(model, train_mat, test_mat, config, logger):
-    sampler_list = [SamplerUserModel, PopularSamplerModel, SoftmaxApprSampler]
+    sampler_list = [SamplerUserModel, PopularSamplerModel, SoftmaxApprSampler, ExactSamplerModel]
     optimizer = utils_optim(config.learning_rate, model)
     lr = config.learning_rate
     device = torch.device(config.device)
     for epoch in range(config.epoch):
-        loss = 0
+        loss_ = 0.0
         logger.info("Epoch %d, Start Sampling !!!"%epoch)
         # print("--Epoch %d"%epoch)
         
@@ -156,20 +173,23 @@ def train_model(model, train_mat, test_mat, config, logger):
             # kl_divergence = model.klv_loss() / (batch_idx + 1.0)
             kl_divergence = model.klv_loss() / config.batch_size
 
-            if (batch_idx % 10) == 0:
-                logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
+            # if (batch_idx % 10) == 0:
+            #     logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
 
             loss += kl_divergence
             loss.backward()
             # torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
+            loss_ += loss
+        logger.info('-- loss : %.4f'% loss_)
             
         
         if (epoch % 5) == 0:
             result = evaluate(model, train_mat, test_mat, config, logger)
             logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49]))
             lr = lr * 0.95
-            optimizer = utils_optim(lr, model)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
 
 
 
