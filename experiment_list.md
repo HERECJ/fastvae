@@ -40,3 +40,24 @@ For sampling
 
 Other
 + The dimension of embeddings : choose the best baseline algorithm
+
+
+
+## Baseline 1: base_vae_cf
+python run.py --sampler 0 --dim 64 --log_path "save_path" 
++ learning rate
++ epoch 可以跑多一点
++ batch size  16/32
+现在每20个epoch lr有一次衰减，进行一次evaluate（可以把这个evaluate去掉，比较慢）
+数据集 yelpdata.mat, amazondata.mat
+
+## Baseline 2: uniform sampler
+python run.py --sampler 1 --dim 
+--loss_mode 1/3   一般建议直接跑3
++ learning rate
++ epoch 可以跑多一点
++ batch size 16/32
++ -s --sample_num 从100个开始试起, 100, 200, 500 ... 找到一个比较小的值，当采样数量足够多之后，ndcg变化不大
+
+## 其他 
+所有的loss 可以改 run.py/compute_loss reduction 是计算均值还是求和
