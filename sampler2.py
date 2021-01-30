@@ -75,11 +75,11 @@ class ExactSamplerModel(SamplerUserModel):
     def preprocess(self, user_id):
         super(ExactSamplerModel, self).preprocess(user_id)
         pred = self.user_embs[user_id] @ self.item_embs.T
-        idx = np.argpartition(pred, -10)[-10:]
-        pred[idx] = -np.inf
+        # idx = np.argpartition(pred, -10)[-10:]
+        # pred[idx] = -np.inf
         self.score = sp.special.softmax(pred)
         self.score_cum = self.score.cumsum()
-        self.score_cum[-1] = 1.0
+        # self.score_cum[-1] = 1.0
         
     def __sampler__(self, user_id):
         def sample():
@@ -183,10 +183,8 @@ class SoftmaxApprSampler(SamplerUserModel):
         k_0 = clusters_idx // self.num_cluster
         k_1 = clusters_idx % self.num_cluster
         
-        p_0 = self.p_table_0[k_0]
-        p_1 = self.p_table_1[k_0, k_1]
-        
-        # p_r =
+        p_0 = np.array(self.comput_p(k_0, self.p_table_0))
+        p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0 in zip(k_1, k_0)]))
 
         frac = np.matmul(self.user_embs[user_id], self.item_emb_res[item_list].T)
         deno = np.array([self.kk_mtx[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
@@ -288,6 +286,7 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
         
         self.partition = np.sum(np.exp(r_centers_0 + np.log(phi_k)))
 
+
     def __sampler__(self, user_id):
         def sample():
             seeds_values = np.random.rand(self.num_neg)
@@ -307,7 +306,8 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
 
  
             final_items = [np.random.choice(items) for items in idx_items_lst] 
-            final_probs = [ 1.0 / len(items) for items in idx_items_lst] 
+            final_probs = [ 1.0 / len(items) for items in idx_items_lst]
+            final_probs = p_0 * p_1 * np.array(final_probs)
             return final_items, final_probs
         return sample
     
@@ -316,8 +316,8 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
         k_0 = clusters_idx // self.num_cluster
         k_1 = clusters_idx % self.num_cluster
         
-        p_0 = self.p_table_0[k_0]
-        p_1 = self.p_table_1[k_0, k_1]
+        p_0 = np.array(self.comput_p(k_0, self.p_table_0))
+        p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0 in zip(k_1, k_0)]))
         
         # p_r =
 
@@ -414,13 +414,48 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
         k_0 = clusters_idx // self.num_cluster
         k_1 = clusters_idx % self.num_cluster
         
-        p_0 = self.p_table_0[k_0]
-        p_1 = self.p_table_1[k_0, k_1]
+        p_0 = np.array(self.comput_p(k_0, self.p_table_0))
+        p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0 in zip(k_1, k_0)]))
         
         # p_r =
         p_r = np.array(self.pop_probs_mat[item_list,:].data)
         return p_0 * p_1 * p_r
 
+class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
+    def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
+        super(UniformSoftmaxSampler, self).__init__(mat, num_neg, user_embs, item_embs, num_cluster)
+    
+    def __sampler__(self, user_id):
+        def sample():
+            seeds_values = np.random.rand(self.num_neg)
+            sampled_cluster_0 = np.array(list(map(lambda x : bisect.bisect(self.p_table_0, x) , seeds_values)))
+            p_0 = np.array(self.comput_p(sampled_cluster_0, self.p_table_0))
+
+
+            seeds_values = np.random.rand(self.num_neg)
+            sampled_cluster_1 = list(map(lambda idx, x: bisect.bisect(self.p_table_1[idx], x) , sampled_cluster_0, seeds_values))
+            
+            p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0  in zip(sampled_cluster_1, sampled_cluster_0)]))
+
+            idx_final_cluster = [idx_0 * self.num_cluster + idx_1 for idx_0, idx_1 in zip(sampled_cluster_0, sampled_cluster_1)]
+
+            idx_items_lst = [[ self.combine_cluster.indices[j] for j in range(self.combine_cluster.indptr[c], self.combine_cluster.indptr[c+1])] for c in idx_final_cluster]
+            
+            final_items = []
+            final_probs = []
+            for items in idx_items_lst:
+                rui_items =  np.matmul(self.user_embs[user_id], self.item_emb_res[items].T)
+                # to compute on the fly without delta
+                item_sample_idx, p = self.sample_final_items(rui_items)
+                final_items.append(items[item_sample_idx])
+                final_probs.append(p)
+            
+            final_probs = p_0 * p_1 * np.array(final_probs)
+            return final_items, final_probs
+        return sample
+
+    def compute_item_p(self, user_id, item_list):
+        super(SoftmaxApprSamplerUniform, self).compute_item_p(user_id, item_list)
 
 
 
@@ -459,40 +494,50 @@ if __name__ == "__main__":
     setup_seed(20)
     # user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
     user_emb , item_emb = torch.tensor(user_emb), torch.tensor(item_emb)
-    sampler = SoftmaxApprSamplerPop(train, 10000, user_emb, item_emb, 25)
-    # sampler = ExactSamplerModel(train[:1], 500000, user_emb, item_emb, 25)
+    sampler = SoftmaxApprSamplerUniform(train[:50], 10000, user_emb, item_emb, 25)
+    # sampler = ExactSamplerModel(train[:50], 5000, user_emb, item_emb, 25)
 
     train_sample = Sampler_Dataset(sampler)
     train_dataloader = DataLoader(train_sample, batch_size=2, num_workers=2,worker_init_fn=worker_init_fn)
     b = 0
     for idx, data in enumerate(train_dataloader):
         user_id, user_his, ruis, neg_id, prob = data
+        # print('Batch ', idx)
+        # if 0 not in user_id:
+        #     continue
 
         uid = user_id[0]
         print(uid)
+
+        # delta = sampler.item_emb_res
         u_emb = user_emb[uid,:]
         scores = torch.matmul(u_emb, item_emb.T).squeeze(dim=0)
         probs = F.softmax(scores, dim=-1).numpy()
-        probs = np.cumsum(probs, axis=-1)
-        probs_str = ['%s : %.5f' % (i ,probs[i]) for i in range(len(probs))]
-        # print(' '.join(probs_str))
-        print('\n')
 
-        count_arr = np.zeros(item_num, np.float)
-        for item in neg_id[0]:
-            count_arr[item] += 1
-        count_str =  ['%s : %d' % (i ,count_arr[i]) for i in range(len(count_arr))]
-        # print(' '.join(count_str))
-        print('\n')
-        count_arr = count_arr / np.sum(count_arr)
-        count_arr = np.cumsum(count_arr, axis=-1)
-        count_str =  ['%s : %.5f' % (i ,count_arr[i]) for i in range(len(count_arr))]
-        # print(' '.join(count_str))
+        
+        prob_pos = ruis[0]
+        print(torch.tensor(probs) * user_his, prob_pos)
+        # probs = np.cumsum(probs, axis=-1)
+        # probs_str = ['%s : %.5f' % (i ,probs[i]) for i in range(len(probs))]
+        # # print(' '.join(probs_str))
+        # print('\n')
 
-        import matplotlib.pyplot as plt
-        plt.plot(probs, linewidth = '2', label='computed softmax')
-        plt.plot(count_arr, label='sampled_dis')
-        plt.legend()
-        plt.savefig('test_dis_25_pop.jpg')
+        # count_arr = np.zeros(item_num, np.float)
+        # for item in neg_id[0]:
+        #     count_arr[item] += 1
+        # count_str =  ['%s : %d' % (i ,count_arr[i]) for i in range(len(count_arr))]
+        # # print(' '.join(count_str))
+        # print('\n')
+        # count_arr = count_arr / np.sum(count_arr)
+        # count_arr = np.cumsum(count_arr, axis=-1)
+        # count_str =  ['%s : %.5f' % (i ,count_arr[i]) for i in range(len(count_arr))]
+        # # print(' '.join(count_str))
+
+        # import matplotlib.pyplot as plt
+        # plt.plot(probs, linewidth = '2', label='computed softmax')
+        # plt.plot(count_arr, label='sampled_dis')
+        # plt.legend()
+        # plt.savefig('dis_25_e_more.jpg')
         import pdb; pdb.set_trace()
         b = b + 1
+    print('finish')
