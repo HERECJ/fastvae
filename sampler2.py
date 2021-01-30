@@ -152,20 +152,20 @@ class SoftmaxApprSampler(SamplerUserModel):
 
     def preprocess(self, user_id):
         
-        self.delta_rui = np.matmul(self.user_embs[user_id], self.item_emb_res.T)
-        combine_tmp = sp.sparse.csr_matrix((np.exp(self.delta_rui), (np.arange(self.num_items), np.arange(self.num_items))), shape=(self.num_items, self.num_items))
+        delta_rui = np.matmul(self.user_embs[user_id], self.item_emb_res.T)
+        combine_tmp = sp.sparse.csr_matrix((np.exp(delta_rui), (np.arange(self.num_items), np.arange(self.num_items))), shape=(self.num_items, self.num_items))
         combine_mat = combine_tmp * self.combine_cluster
 
         # combine_max = np.max(combine_mat, axis=0).A
         # combine_norm = 
 
 
-        # w_kk : \sum_{j\in K K'} exp(rui)
-        self.w_kk = combine_mat.sum(axis=0).A
-        self.w_kk[self.idx_nonzero] = np.log(self.w_kk[self.idx_nonzero])
-        self.w_kk[np.invert(self.idx_nonzero)] = -np.inf
+        # w_kk : \sum_{i\in K K'} exp(rui)
+        w_kk = combine_mat.sum(axis=0).A
+        w_kk[self.idx_nonzero] = np.log(w_kk[self.idx_nonzero])
+        w_kk[np.invert(self.idx_nonzero)] = -np.inf
 
-        self.kk_mtx = self.w_kk.reshape((self.num_cluster, self.num_cluster))
+        self.kk_mtx = w_kk.reshape((self.num_cluster, self.num_cluster))
         
         r_centers_1 = self.center_scores_1[user_id]
         phi_k_tmp = self.kk_mtx  +  r_centers_1
@@ -204,7 +204,8 @@ class SoftmaxApprSampler(SamplerUserModel):
             final_items = []
             final_probs = []
             for items in idx_items_lst:
-                rui_items = self.delta_rui[items]
+                rui_items =  np.matmul(self.user_embs[user_id], self.item_emb_res[items].T)
+                # to compute on the fly without delta
                 item_sample_idx, p = self.sample_final_items(rui_items)
                 final_items.append(items[item_sample_idx])
                 final_probs.append(p)
@@ -241,6 +242,39 @@ class SoftmaxApprSampler(SamplerUserModel):
             k = bisect.bisect(score_cum, np.random.rand()) 
             p = pred[k]
             return k, p
+
+class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
+    """
+    Uniform sampling the final items
+    """
+    def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
+        super(SoftmaxApprSamplerUniform, self).__init__(mat, num_neg, user_embs, item_embs, num_cluster)
+        
+        self.w_kk = self.combine_cluster.sum(axis=0).A
+        self.w_kk[self.idx_nonzero] = np.log(self.w_kk[self.idx_nonzero])
+        self.w_kk[np.invert(self.idx_nonzero)] = -np.inf
+
+        self.kk_mtx = self.w_kk.reshape((self.num_cluster, self.num_cluster))
+        
+        r_centers_1 = self.center_scores_1[user_id]
+        phi_k_tmp = self.kk_mtx  +  r_centers_1
+        self.p_table_1 = (sp.special.softmax(phi_k_tmp, 1)).cumsum(axis=1)
+
+        self.phi_k = np.sum(np.exp(phi_k_tmp), axis=1)
+
+        r_centers_0 = self.center_scores_0[user_id]
+        self.p_table_0 = (sp.special.softmax(r_centers_0 + np.log(self.phi_k))).cumsum()
+        
+        self.partition = np.sum(np.exp(r_centers_0 + np.log(self.phi_k)))
+    
+    def preprocess(self, user_id):
+        pass
+
+    def __sampler__(self, user_id):
+        def sample():
+
+
+
 
 
 
