@@ -330,8 +330,97 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
     """
     Popularity sampling for the final items
     """
-    def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
-        super(SoftmaxApprSamplerUniform, self).__init__(mat, num_neg, user_embs, item_embs, num_cluster)
+    def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster, mode=0):
+        super(SoftmaxApprSamplerPop, self).__init__(mat, num_neg, user_embs, item_embs, num_cluster)
+        pop_count = np.squeeze(mat.sum(axis=0).A)
+        if mode == 0:
+            pop_count = np.log(pop_count + 1)
+        elif mode == 1:
+            pop_count = np.log(pop_count + 1) + 1e-6
+        elif mode == 2:
+            pop_count = pop_count**0.75
+        
+        self.pop_count = pop_count
+        
+        
+        combine_tmp = sp.sparse.csr_matrix((self.pop_count, (np.arange(self.num_items), np.arange(self.num_items))), shape=(self.num_items, self.num_items))
+        combine_mat = combine_tmp * self.combine_cluster
+
+        w_kk = combine_mat.sum(axis=0).A
+
+        w_k_tmp = sp.sparse.csr_matrix(( 1.0/(np.squeeze(w_kk) + np.finfo(float).eps), (np.arange(self.num_cluster**2), np.arange(self.num_cluster**2))), shape=(self.num_cluster**2, self.num_cluster**2))
+        
+        self.pop_probs_mat = (combine_mat * w_k_tmp).tocsc()
+        
+        self.pop_cum_mat = self.pop_probs_mat.copy()
+        for c in range(self.num_cluster**2):
+            item_prob = [ self.pop_probs_mat.data[j] for j in range(self.pop_probs_mat.indptr[c], self.pop_probs_mat.indptr[c+1])]
+            item_cum_prob = np.cumsum(np.array(item_prob))
+            for item_i, j in enumerate(range(self.pop_probs_mat.indptr[c], self.pop_probs_mat.indptr[c+1])):
+                self.pop_cum_mat.data[j] = item_cum_prob[item_i]        
+        
+        w_kk[self.idx_nonzero] = np.log(w_kk[self.idx_nonzero])
+        w_kk[np.invert(self.idx_nonzero)] = -np.inf
+
+        self.kk_mtx = w_kk.reshape((self.num_cluster, self.num_cluster))
+
+
+
+    def preprocess(self, user_id):
+        r_centers_1 = self.center_scores_1[user_id]
+        phi_k_tmp = self.kk_mtx  +  r_centers_1
+        self.p_table_1 = (sp.special.softmax(phi_k_tmp, 1)).cumsum(axis=1)
+
+        phi_k = np.sum(np.exp(phi_k_tmp), axis=1)
+
+        r_centers_0 = self.center_scores_0[user_id]
+        self.p_table_0 = (sp.special.softmax(r_centers_0 + np.log(phi_k))).cumsum()
+        
+        self.partition = np.sum(np.exp(r_centers_0 + np.log(phi_k)))
+    
+    def __sampler__(self, user_id):
+        def sample():
+            seeds_values = np.random.rand(self.num_neg)
+            sampled_cluster_0 = np.array(list(map(lambda x : bisect.bisect(self.p_table_0, x) , seeds_values)))
+            p_0 = np.array(self.comput_p(sampled_cluster_0, self.p_table_0))
+
+
+            seeds_values = np.random.rand(self.num_neg)
+            sampled_cluster_1 = list(map(lambda idx, x: bisect.bisect(self.p_table_1[idx], x) , sampled_cluster_0, seeds_values))
+            
+            p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0  in zip(sampled_cluster_1, sampled_cluster_0)]))
+            
+
+            idx_final_cluster = [idx_0 * self.num_cluster + idx_1 for idx_0, idx_1 in zip(sampled_cluster_0, sampled_cluster_1)]
+            
+            # idx_items_lst = [[ self.combine_cluster.indices[j] for j in range(self.combine_cluster.indptr[c], self.combine_cluster.indptr[c+1])] for c in idx_final_cluster]
+
+            final_items, final_probs = [], []
+            for c in idx_final_cluster:
+                items, cum_probs = zip(*[ (self.pop_cum_mat.indices[j], self.pop_cum_mat.data[j]) for j in range(self.pop_probs_mat.indptr[c], self.pop_probs_mat.indptr[c+1])])
+                k = bisect.bisect(cum_probs, np.random.rand())
+                sampled_item = items[k]
+
+                p_r = self.pop_probs_mat[sampled_item, c]
+                final_items.append(sampled_item)
+                final_probs.append(p_r)
+
+            final_probs = p_0 * p_1 * np.array(final_probs)
+            return  final_items, final_probs
+        return sample
+    
+    def compute_item_p(self, user_id, item_list):
+        clusters_idx = self.combine_cluster[item_list, :].nonzero()[1] # find the combine cluster idx
+        k_0 = clusters_idx // self.num_cluster
+        k_1 = clusters_idx % self.num_cluster
+        
+        p_0 = self.p_table_0[k_0]
+        p_1 = self.p_table_1[k_0, k_1]
+        
+        # p_r =
+        p_r = np.array(self.pop_probs_mat[item_list,:].data)
+        return p_0 * p_1 * p_r
+
 
 
 
@@ -367,10 +456,10 @@ if __name__ == "__main__":
     user_num, item_num = train.shape
     user_emb = np.load('u.npy')
     item_emb = np.load('v.npy')
-    # setup_seed(20)
+    setup_seed(20)
     # user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
     user_emb , item_emb = torch.tensor(user_emb), torch.tensor(item_emb)
-    sampler = SoftmaxApprSamplerUniform(train[:1], 10000, user_emb, item_emb, 5)
+    sampler = SoftmaxApprSamplerPop(train, 10000, user_emb, item_emb, 25)
     # sampler = ExactSamplerModel(train[:1], 500000, user_emb, item_emb, 25)
 
     train_sample = Sampler_Dataset(sampler)
@@ -404,6 +493,6 @@ if __name__ == "__main__":
         plt.plot(probs, linewidth = '2', label='computed softmax')
         plt.plot(count_arr, label='sampled_dis')
         plt.legend()
-        plt.savefig('test_dis_25_5.jpg')
+        plt.savefig('test_dis_25_pop.jpg')
         import pdb; pdb.set_trace()
         b = b + 1
