@@ -418,7 +418,8 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
         p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0 in zip(k_1, k_0)]))
         
         # p_r =
-        p_r = np.array(self.pop_probs_mat[item_list,:].data)
+        p_r = np.squeeze(np.array([self.pop_probs_mat[idx,:].data for idx in item_list ]))
+        # p_r = np.array(self.pop_probs_mat[item_list,:].data)
         return p_0 * p_1 * p_r
 
 class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
@@ -494,7 +495,7 @@ if __name__ == "__main__":
     setup_seed(20)
     # user_emb, item_emb = torch.rand((user_num, 20)), torch.rand((item_num, 20))
     user_emb , item_emb = torch.tensor(user_emb), torch.tensor(item_emb)
-    sampler = SoftmaxApprSamplerUniform(train[:50], 10000, user_emb, item_emb, 25)
+    sampler = SoftmaxApprSamplerPop(train, 10000, user_emb, item_emb, 25)
     # sampler = ExactSamplerModel(train[:50], 5000, user_emb, item_emb, 25)
 
     train_sample = Sampler_Dataset(sampler)
@@ -510,7 +511,10 @@ if __name__ == "__main__":
         print(uid)
 
         # delta = sampler.item_emb_res
+        # popular_pop = sampler.pop_count
         u_emb = user_emb[uid,:]
+        # scores = torch.matmul(u_emb, (item_emb - delta).T).squeeze(dim=0)
+        # scores = scores + torch.log(torch.tensor(popular_pop))
         scores = torch.matmul(u_emb, item_emb.T).squeeze(dim=0)
         probs = F.softmax(scores, dim=-1).numpy()
 
