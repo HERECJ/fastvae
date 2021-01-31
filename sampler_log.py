@@ -24,7 +24,7 @@ class SamplerUserModel:
 
     def __sampler__(self, user_id):
         def sample():
-            return list(torch.utils.data.RandomSampler(range(self.num_items), num_samples=self.num_neg, replacement=True)), [1.0/self.num_items for _ in range(self.num_neg)]
+            return list(torch.utils.data.RandomSampler(range(self.num_items), num_samples=self.num_neg, replacement=True)), [np.log(1.0/self.num_items) for _ in range(self.num_neg)]
         return sample
 
     def negative_sampler(self, start_id, end_id):
@@ -46,7 +46,7 @@ class SamplerUserModel:
         return generate_tuples
     
     def compute_item_p(self, user_id, item_list):
-        return [1.0/self.num_items for _ in item_list]
+        return [np.log(1.0/self.num_items) for _ in item_list]
 
 
 class PopularSamplerModel(SamplerUserModel):
@@ -69,14 +69,14 @@ class PopularSamplerModel(SamplerUserModel):
             seeds = torch.rand(self.num_neg)
             for s in seeds:
                 k = bisect.bisect(self.pop_cum_prob, s)
-                p = self.pop_prob[k]
+                p = np.log(self.pop_prob[k])
                 neg_items.append(k)
                 probs.append(p)
             return neg_items, probs
         return sample
     
     def compute_item_p(self, user_id, item_list):
-        return [self.pop_prob[k] for k in item_list]
+        return [np.log(self.pop_prob[k]) for k in item_list]
 
 class ExactSamplerModel(SamplerUserModel):
     def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
@@ -101,14 +101,14 @@ class ExactSamplerModel(SamplerUserModel):
             seeds = torch.rand(self.num_neg)
             for s in seeds:
                 k = bisect.bisect(self.score_cum,s)
-                p = self.score[k]
+                p = np.log(self.score[k])
                 neg_items.append(k)
                 probs.append(p)
             return neg_items, probs
         return sample
 
     def compute_item_p(self, user_id, item_list):
-        return [self.score[k] for k in item_list]
+        return [np.log(self.score[k]) for k in item_list]
 
 
 class SoftmaxApprSampler(SamplerUserModel):
@@ -191,8 +191,8 @@ class SoftmaxApprSampler(SamplerUserModel):
 
         frac = np.matmul(self.user_embs[user_id], self.item_emb_res[item_list].T)
         deno = np.array([self.kk_mtx[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
-        p_r = np.exp(frac - deno)
-        return p_0 * p_1 * p_r
+        # p_r = np.exp(frac - deno)
+        return np.log(p_0) + np.log(p_1) + frac - deno
         
     
 
@@ -227,7 +227,7 @@ class SoftmaxApprSampler(SamplerUserModel):
                 final_items.append(items[item_sample_idx])
                 final_probs.append(p)
             
-            final_probs = p_0 * p_1 * np.array(final_probs)
+            final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
             return final_items, final_probs
         return sample
     
@@ -310,7 +310,7 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
  
             final_items = [np.random.choice(items) for items in idx_items_lst] 
             final_probs = [ 1.0 / len(items) for items in idx_items_lst]
-            final_probs = p_0 * p_1 * np.array(final_probs)
+            final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
             return final_items, final_probs
         return sample
     
@@ -326,8 +326,8 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
 
 
         deno = np.array([self.kk_mtx[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
-        p_r = np.exp( - deno)
-        return p_0 * p_1 * p_r
+        # p_r = np.exp( - deno)
+        return np.log(p_0) + np.log(p_1) - deno
 
 class SoftmaxApprSamplerPop(SoftmaxApprSampler):
     """
@@ -408,7 +408,7 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
                 final_items.append(sampled_item)
                 final_probs.append(p_r)
 
-            final_probs = p_0 * p_1 * np.array(final_probs)
+            final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
             return  final_items, final_probs
         return sample
     
@@ -423,7 +423,7 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
         # p_r =
         p_r = np.squeeze(np.array([self.pop_probs_mat[idx,:].data for idx in item_list ]))
         # p_r = np.array(self.pop_probs_mat[item_list,:].data)
-        return p_0 * p_1 * p_r
+        return np.log(p_0) + np.log(p_1) + np.log(p_r)
 
 class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
     def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
@@ -473,7 +473,7 @@ class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
                 final_items.append(items[item_sample_idx])
                 final_probs.append(p)
             
-            final_probs = p_0 * p_1 * np.array(final_probs)
+            final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
             return final_items, final_probs
         return sample
 
@@ -487,8 +487,8 @@ class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
 
         frac = np.matmul(self.user_embs[user_id], self.item_emb_res[item_list].T)
         deno = np.array([self.kk_mtx_res[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
-        p_r = np.exp(frac - deno)
-        return p_0 * p_1 * p_r
+        # p_r = np.exp(frac - deno)
+        return np.log(p_0) + np.log(p_1) + frac - deno
 
 
 

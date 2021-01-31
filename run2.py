@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim
 from torch.utils.data import DataLoader
-from vae_models import BaseVAE, VAE_CF, QVAE_CF
+from vae_models import BaseVAE, VAE_CF
 import argparse
 from dataloader import RecData, UserItemData, Sampler_Dataset
 from sampler2 import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
@@ -16,7 +16,6 @@ import datetime, time
 import math
 # coloredlogs.install(level='DEBUG')
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 def get_logger(filename, verbosity=1, name=None):
@@ -208,8 +207,8 @@ def main(config, logger=None):
         model = BaseVAE(user_num, item_num, latent_dim)
     elif config.model == 'vae' and config.sampler > 0:
         model = VAE_CF(user_num, item_num, latent_dim)
-    elif config.model == 'qvae':
-        model = QVAE_CF(user_num, item_num, latent_dim, num_partitions=config.encode_subspace, num_centroids=config.encode_cluster)
+    else:
+        raise ValueError('Not supported model name!!!')
     model = model.to(device)
     train_model(model, train_mat, test_mat, config, logger)
     
@@ -239,7 +238,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
+    parser.add_argument('--sampler', default=7, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--loss_mode', default=3, type=int, help='the loss mode for sampled items')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
 
