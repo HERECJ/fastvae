@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from vae_models import BaseVAE, VAE_CF
 import argparse
 from dataloader import RecData, UserItemData, Sampler_Dataset
-from sampler_log import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
+from sampler import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
 import numpy as np
 from utils import Eval
 import logging, coloredlogs
@@ -102,6 +103,7 @@ def evaluate(model, train_mat, test_mat, config, logger):
 def train_model(model, train_mat, test_mat, config, logger):
     sampler_list = [SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler]
     optimizer = utils_optim(config.learning_rate, model)
+    scheduler = StepLR(optimizer, config.step_size, config.gamma)
     lr = config.learning_rate
     device = torch.device(config.device)
     for epoch in range(config.epoch):
@@ -142,17 +144,13 @@ def train_model(model, train_mat, test_mat, config, logger):
             # torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
             loss_ += loss
+        
         logger.info('-- loss : %.4f'% loss_)
             
-        
+        scheduler.step()
         if (epoch % 20) == 0:
             result = evaluate(model, train_mat, test_mat, config, logger)
             logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49]))
-        
-        if (epoch % 5) == 0:
-            lr = lr * 0.95
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
 
     # user_emb, item_emb = model.get_uv()
     # np.save('u.npy', user_emb.cpu().detach().numpy())
@@ -221,6 +219,8 @@ if __name__ == "__main__":
     parser.add_argument('--sampler', default=7, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--loss_mode', default=3, type=int, help='the loss mode for sampled items')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
+    parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
+    parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
 
 
     config = parser.parse_args()
