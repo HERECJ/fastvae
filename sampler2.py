@@ -37,7 +37,7 @@ class SamplerUserModel:
                 self.preprocess(i)
                 neg_item, prob = sample_negative(i)
                 user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
-                yield i, user_his, torch.zeros(self.num_items), torch.LongTensor(neg_item), torch.tensor(prob)
+                yield i, user_his, torch.ones_like(self.num_items)/self.num_items, torch.LongTensor(neg_item), torch.tensor(prob)
         return generate_tuples
 
 class PopularSamplerModel(SamplerUserModel):
@@ -121,8 +121,8 @@ class SoftmaxApprSampler(SamplerUserModel):
         cluster_dim = latent_dim // 2
         
 
-        user_embs = user_embs.cpu().data.numpy()
-        item_embs = item_embs.cpu().data.numpy()
+        user_embs = user_embs.cpu().data.detach().numpy()
+        item_embs = item_embs.cpu().data.detach().numpy()
         self.user_embs = user_embs
 
 
