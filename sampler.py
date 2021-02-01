@@ -86,7 +86,7 @@ class ExactSamplerModel(SamplerUserModel):
 
     def preprocess(self, user_id):
         super(ExactSamplerModel, self).preprocess(user_id)
-        pred = self.user_embs[user_id] @ self.item_embs.T
+        self.pred = self.user_embs[user_id] @ self.item_embs.T
         idx = np.argpartition(pred, -5)[-5:]
         pred[idx] = -np.inf
         self.score = sp.special.softmax(pred)
@@ -101,14 +101,15 @@ class ExactSamplerModel(SamplerUserModel):
             seeds = torch.rand(self.num_neg)
             for s in seeds:
                 k = bisect.bisect(self.score_cum,s)
-                p = np.log(self.score[k])
+                # p = np.log(self.score[k])
+                p = self.pred[k]
                 neg_items.append(k)
                 probs.append(p)
             return neg_items, probs
         return sample
 
     def compute_item_p(self, user_id, item_list):
-        return [np.log(self.score[k]) for k in item_list]
+        return [self.pred[k] for k in item_list]
 
 
 class SoftmaxApprSampler(SamplerUserModel):
