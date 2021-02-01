@@ -52,7 +52,7 @@ python run.py --sampler 0 --dim 64 --log_path "save_path"
 数据集 yelpdata.mat, amazondata.mat
 
 ## Baseline 2: uniform sampler
-python run.py --sampler 1 --dim 
+python run.py --sampler 1 --dim 64
 --loss_mode 1/3   一般建议直接跑3
 + learning rate
 + epoch 可以跑多一点

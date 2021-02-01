@@ -1,96 +1,37 @@
+from dataloader import RecData, UserItemData, Sampler_Dataset
+from sampler import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
-from vae_models import BaseVAE, VAE_CF
+from vae_models import BaseVAE, VAE_Sampler
 import argparse
-from dataloader import RecData, UserItemData, Sampler_Dataset
-from sampler import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
 import numpy as np
 from utils import Eval
-import logging, coloredlogs
+import utils
+import logging
 import scipy as sp
 import scipy.io
-import datetime, time
+import datetime
+import time
 import math
-# coloredlogs.install(level='DEBUG')
 import os
 
 
-def get_logger(filename, verbosity=1, name=None):
-    filename = filename + '.txt'
-    level_dict = {0: logging.DEBUG, 1: logging.INFO, 2: logging.WARNING}
-    formatter = logging.Formatter(
-        "[%(asctime)s][%(filename)s][line:%(lineno)d][%(levelname)s] %(message)s"
-    )
-    logger = logging.getLogger(name)
-    logger.setLevel(level_dict[verbosity])
-
-    fh = logging.FileHandler(filename, "w")
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-    sh = logging.StreamHandler()
-    sh.setFormatter(formatter)
-    logger.addHandler(sh)
-
-    return logger
-
-
-def setup_seed(seed):
-    import os
-    os.environ['PYTHONHASHSEED']=str(seed)
-
-    import random
-    random.seed(seed)
-    np.random.seed(seed)
-    
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
 
 
 
-def worker_init_fn(worker_id):
-    worker_info = torch.utils.data.get_worker_info()
-    dataset = worker_info.dataset  # the dataset copy in this worker process
-    overall_start = dataset.start_user
-    overall_end = dataset.end_user
-    # configure the dataset to only process the split workload
-    per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
-    worker_id = worker_info.id
-    dataset.start_user = overall_start + worker_id * per_worker
-    dataset.end_user = min(dataset.start_user + per_worker, overall_end)
-
-def compute_loss(user_his, prob_pos, pos_rats, part_rats, prob_neg=None,reduction=True, loss_mode=0):
-    if loss_mode == 0 :
-        user_his = user_his.squeeze(dim=1)
-        item_logits = torch.negative(F.log_softmax(part_rats, dim=-1))
-        scores = (item_logits[user_his>0]).sum(-1)
-    elif loss_mode == 1:
-        new_pos = pos_rats - prob_pos.detach()
-        new_neg = part_rats - prob_neg.detach()
-        parts_sum_exp = torch.sum(torch.exp(new_neg), dim=-1).unsqueeze(-1)
-        new_pos[user_his<1] = -float("Inf")
-        tmp = torch.exp(new_pos) + parts_sum_exp
-        final = torch.log(tmp)
-        scores =  ((- new_pos + final)[user_his>0]).sum(-1)
-
-
-    if reduction:
-        return scores.mean()
-    else:
-        return scores.sum()
-
-
-def evaluate(model, train_mat, test_mat, config, logger):
+def evaluate(model, train_mat, test_mat, config, logger, device):
     logger.info("Start evaluation")
     model.eval()
     with torch.no_grad():
         user_num, item_num = train_mat.shape
-        user_emb, item_emb = model.get_uv()
+        
+        user_emb = get_user_embs(test_mat, model, device)
+        item_emb = model._get_item_emb()
+        
         user_emb = user_emb.cpu().data
         item_emb = item_emb.cpu().data
         # ratings = torch.matmul(user_emb, item_emb.T)
@@ -99,42 +40,52 @@ def evaluate(model, train_mat, test_mat, config, logger):
         m = evals.evaluate_item(train_mat[users, :], test_mat[users, :], user_emb[users, :], item_emb, topk=200)
     return m
 
+def get_user_embs(data_mat, model, device):
+    data = UserItemData(data_mat)
+    dataloader = DataLoader(data, batch_size=config.batch_size_u, num_workers=config.num_workers, pin_memory=True, shuffle=False)
+    user_lst = []
+    for e in dataloader:
+        user_his, _, _, _, _ = e
+        user_emb = model._get_user_emb(user_his.to(device))
+        user_lst.append(user_emb)
+    return torch.cat(user_lst, dim=0)
 
 def train_model(model, train_mat, test_mat, config, logger):
     sampler_list = [SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler]
     optimizer = utils_optim(config.learning_rate, model)
     scheduler = StepLR(optimizer, config.step_size, config.gamma)
-    lr = config.learning_rate
     device = torch.device(config.device)
     for epoch in range(config.epoch):
         loss_ = 0.0
-        logger.info("Epoch %d, Start Sampling !!!"%epoch)
+        logger.info("Epoch %d"%epoch)
         # print("--Epoch %d"%epoch)
         
         if config.sampler == 0:
             train_data = UserItemData(train_mat)
-            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, pin_memory=True)
-            logging.info('Finish Loading Dataset, Start training !!!')
-            loss_mode = 0
+            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, pin_memory=True, shuffle=True)
+            # logging.info('Finish Loading Dataset, Start training !!!')
+
 
         elif config.sampler > 0:
-            user_emb, item_emb = model.get_uv()
+            user_emb = get_user_embs(train_mat, model, device)
+            item_emb = model._get_item_emb()
+
             sampler = sampler_list[config.sampler-1](train_mat, config.sample_num, user_emb, item_emb, config.cluster_num)
             train_data = Sampler_Dataset(sampler)
-            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=worker_init_fn, pin_memory=True)        
-            logging.info('Finish Sampling, Start training !!!')
-            loss_mode = 1
+            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=utils.worker_init_fn, collate_fn=utils.custom_collate, pin_memory=True)        
+            # logging.info('Finish Sampling, Start training !!!')
         
         for batch_idx, data in enumerate(train_dataloader):
             model.train()
-            user_id, user_his, prob_pos, neg_id, prob_neg = data
-            user_id, user_his, prob_pos, neg_id, prob_neg = user_id.to(device), user_his.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
+
+            user_his, pos_id, prob_pos, neg_id, prob_neg = data
+            user_his, pos_id, prob_pos, neg_id, prob_neg = user_his.to(device), pos_id.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
             optimizer.zero_grad()
-            pos_rats, part_rats = model(user_id, user_his, neg_id)
-            # part_rats is the denominator of the softmax function
-            loss = compute_loss(user_his, prob_pos, pos_rats, part_rats, prob_neg=prob_neg, loss_mode=loss_mode)
-            # kl_divergence = model.klv_loss() / (batch_idx + 1.0)
-            kl_divergence = model.klv_loss() / config.batch_size
+            pos_rat, neg_rat , mu, logvar = model(user_his, pos_id, neg_id) 
+
+            loss = model.loss_function(user_his, neg_rat, prob_neg, pos_rat, prob_pos, reduction=config.reduction)
+            
+            kl_divergence = model.kl_loss(mu, logvar, config.anneal)
 
             # if (batch_idx % 5) == 0:
             # logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
@@ -149,13 +100,8 @@ def train_model(model, train_mat, test_mat, config, logger):
             
         scheduler.step()
         if (epoch % 20) == 0:
-            result = evaluate(model, train_mat, test_mat, config, logger)
+            result = evaluate(model, train_mat, test_mat, config, logger, device)
             logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49]))
-
-    # user_emb, item_emb = model.get_uv()
-    # np.save('u.npy', user_emb.cpu().detach().numpy())
-    # np.save('v.npy', item_emb.cpu().detach().numpy())
-
 
 
 def utils_optim(learning_rate, model):
@@ -173,54 +119,46 @@ def main(config, logger=None):
     train_mat, test_mat = data.get_data(config.ratio)
     user_num, item_num = train_mat.shape
     logging.info('The shape of datasets: %d, %d'%(user_num, item_num))
-    
-    latent_dim = config.dim
-    num_subspace = config.subspace_num
-    cluster_dim = config.cluster_dim
-    res_dim = latent_dim - num_subspace * cluster_dim
-    assert ( res_dim ) > 0
+
     assert config.sample_num < item_num
     
     if config.model == 'vae' and config.sampler == 0:
-        model = BaseVAE(user_num, item_num, latent_dim)
+        model = BaseVAE(item_num, config.dim)
     elif config.model == 'vae' and config.sampler > 0:
-        model = VAE_CF(user_num, item_num, latent_dim)
+        model = VAE_Sampler(item_num, config.dim)
     else:
         raise ValueError('Not supported model name!!!')
     model = model.to(device)
     train_model(model, train_mat, test_mat, config, logger)
     
-    return evaluate(model, train_mat, test_mat, config, logger)
+    return evaluate(model, train_mat, test_mat, config, logger, device)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Initialize Parameters!')
-    parser.add_argument('-data', default='ml100kdata.mat', type=str, help='path of datafile')
-    parser.add_argument('-d', '--dim', default=64, type=int, help='the dimenson of the latent vector for student model')
-    # parser.add_argument('-r', '--reg', default=1e-2, type=float, help='coefficient of the regularizer')
+    parser.add_argument('-data', default='ml100k', type=str, help='path of datafile')
+    parser.add_argument('-d', '--dim', default=[64], type=list, help='the dimenson of the latent vector for student model')
     parser.add_argument('-s','--sample_num', default=100, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
-    parser.add_argument('--cluster_dim', default=6, type=int, help=' the dimension of the cluster' )
-    # parser.add_argument('--res_dim', default=0, type=int, help='residual dimension latent_dim - subspace_num * cluster_dim')
-    # parser.add_argument('--encode_subspace', default=2, type=int, help='the subspace for user encoding')
-    # parser.add_argument('--encode_cluster', default=48, type=int, help='the number of clusters for user encoding')
     parser.add_argument('-b', '--batch_size', default=16, type=int, help='the batch size for training')
     parser.add_argument('-e','--epoch', default=60, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
-    parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='the learning rate for training')
+    parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help='the learning rate for training')
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
     parser.add_argument('--ratio', default=0.8, type=float, help='the spilit ratio of dataset for train and test')
-    parser.add_argument('--log_path', default='log_sumlog', type=str, help='the path for log files')
+    parser.add_argument('--log_path', default='logs', type=str, help='the path for log files')
     parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for dataloader')
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=7, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
-    parser.add_argument('--loss_mode', default=3, type=int, help='the loss mode for sampled items')
+    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
+    parser.add_argument('--anneal', default=1.0, type=float, help='parameters for kl loss')
+    parser.add_argument('--batch_size_u', default=4096, type=int, help='batch size user for inference')
+    parser.add_argument('--reduction', default=True, type=bool, help='loss if reduction')
 
 
     config = parser.parse_args()
@@ -233,13 +171,13 @@ if __name__ == "__main__":
     sampler = str(config.sampler)
     ISOTIMEFORMAT = '%m%d-%H%M%S'
     timestamp = str(datetime.datetime.now().strftime(ISOTIMEFORMAT))
-    loglogs = '_'.join((config.data[:-4], alg, sampler, timestamp))
+    loglogs = '_'.join((config.data, alg, sampler, timestamp))
     log_file_name = os.path.join(config.log_path, loglogs)
-    logger = get_logger(log_file_name)
+    logger = utils.get_logger(log_file_name)
     
     logger.info(config)
     if config.fix_seed:
-        setup_seed(config.seed)
+        utils.setup_seed(config.seed)
     m = main(config, logger)
     # print('ndcg@5,10,50, ', m['item_ndcg'][[4,9,49]])
 

@@ -24,7 +24,7 @@ class SamplerUserModel:
 
     def __sampler__(self, user_id):
         def sample():
-            return list(torch.utils.data.RandomSampler(range(self.num_items), num_samples=self.num_neg, replacement=True)), [np.log(1.0/self.num_items) for _ in range(self.num_neg)]
+            return list(torch.utils.data.RandomSampler(range(1,self.num_items + 1), num_samples=self.num_neg, replacement=True)), [np.log(1.0/self.num_items) for _ in range(self.num_neg)]
         return sample
 
     def negative_sampler(self, start_id, end_id):
@@ -36,13 +36,16 @@ class SamplerUserModel:
         def generate_tuples():
             for i in np.random.permutation(range(start_id, end_id)):
                 self.preprocess(i)
-                neg_item, prob = sample_negative(i)
-                user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
-                pos_idx = self.mat[i].nonzero()[1]
+                neg_item, neg_prob = sample_negative(i)
+                user_his = self.mat[i].toarray()[0].tolist()
+                pos_idx = self.mat[i].nonzero()[1] # array
                 pos_prob = self.compute_item_p(i, pos_idx)
-                user_prob = self.mat[i].toarray()[0]
-                user_prob[pos_idx] = pos_prob
-                yield i, user_his, torch.tensor(user_prob), torch.LongTensor(neg_item), torch.tensor(prob)
+                pos_idx = (pos_idx + 1).tolist()
+                if type(pos_prob) in  [np.ndarray, np.array]:
+                    pos_prob = pos_prob.tolist()
+                if type(neg_prob) in  [np.ndarray, np.array]:
+                    neg_prob = neg_prob.tolist()
+                yield user_his, pos_idx, pos_prob, neg_item, neg_prob
         return generate_tuples
     
     def compute_item_p(self, user_id, item_list):
@@ -70,7 +73,7 @@ class PopularSamplerModel(SamplerUserModel):
             for s in seeds:
                 k = bisect.bisect(self.pop_cum_prob, s)
                 p = np.log(self.pop_prob[k])
-                neg_items.append(k)
+                neg_items.append(k + 1)
                 probs.append(p)
             return neg_items, probs
         return sample
@@ -87,9 +90,9 @@ class ExactSamplerModel(SamplerUserModel):
     def preprocess(self, user_id):
         super(ExactSamplerModel, self).preprocess(user_id)
         self.pred = self.user_embs[user_id] @ self.item_embs.T
-        idx = np.argpartition(pred, -5)[-5:]
-        pred[idx] = -np.inf
-        self.score = sp.special.softmax(pred)
+        # idx = np.argpartition(self.pred, -5)[-5:]
+        # self.pred[idx] = -np.inf
+        self.score = sp.special.softmax(self.pred)
         self.score_cum = self.score.cumsum()
         self.score_cum[-1] = 1.0
         # print(user_id)
@@ -101,9 +104,8 @@ class ExactSamplerModel(SamplerUserModel):
             seeds = torch.rand(self.num_neg)
             for s in seeds:
                 k = bisect.bisect(self.score_cum,s)
-                # p = np.log(self.score[k])
                 p = self.pred[k]
-                neg_items.append(k)
+                neg_items.append(k + 1)
                 probs.append(p)
             return neg_items, probs
         return sample
@@ -193,7 +195,7 @@ class SoftmaxApprSampler(SamplerUserModel):
         frac = np.matmul(self.user_embs[user_id], self.item_emb_res[item_list].T)
         deno = np.array([self.kk_mtx[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
         # p_r = np.exp(frac - deno)
-        return np.log(p_0) + np.log(p_1) + frac - deno
+        return (np.log(p_0) + np.log(p_1) + frac - deno).tolist()
         
     
 
@@ -225,31 +227,12 @@ class SoftmaxApprSampler(SamplerUserModel):
                 rui_items =  np.matmul(self.user_embs[user_id], self.item_emb_res[items].T)
                 # to compute on the fly without delta
                 item_sample_idx, p = self.sample_final_items(rui_items)
-                final_items.append(items[item_sample_idx])
+                final_items.append(items[item_sample_idx] + 1)
                 final_probs.append(p)
             
             final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
-            return final_items, final_probs
+            return final_items, final_probs.tolist()
         return sample
-    
-    def negative_sampler(self, start_id, end_id):
-        def sample_negative(user_id):
-            sample = self.__sampler__(user_id)
-            k, p = sample()
-            return k, p
-
-        def generate_tuples():
-            for i in np.random.permutation(range(start_id, end_id)):
-                self.preprocess(i)
-                neg_item, prob = sample_negative(i)
-                # uid_emb = self.user_embs[i]
-                user_his = torch.tensor(self.mat[i].toarray()[0].tolist())
-                pos_idx = self.mat[i].nonzero()[1]
-                pos_prob = self.compute_item_p(i, pos_idx)
-                user_prob = self.mat[i].toarray()[0]
-                user_prob[pos_idx] = pos_prob
-                yield i, user_his, torch.tensor(user_prob), torch.LongTensor(neg_item), torch.tensor(prob)
-        return generate_tuples
 
     def sample_final_items(self, scores, eps=1e-8, mode=0):
         pred = sp.special.softmax(scores)
@@ -309,10 +292,10 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
             idx_items_lst = [[ self.combine_cluster.indices[j] for j in range(self.combine_cluster.indptr[c], self.combine_cluster.indptr[c+1])] for c in idx_final_cluster]
 
  
-            final_items = [np.random.choice(items) for items in idx_items_lst] 
+            final_items = [np.random.choice(items) + 1 for items in idx_items_lst] 
             final_probs = [ 1.0 / len(items) for items in idx_items_lst]
             final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
-            return final_items, final_probs
+            return final_items, final_probs.tolist()
         return sample
     
     def compute_item_p(self, user_id, item_list):
@@ -322,13 +305,11 @@ class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
         
         p_0 = np.array(self.comput_p(k_0, self.p_table_0))
         p_1 = np.squeeze(np.array([self.comput_p(np.array([idx_1]), self.p_table_1[idx_0]) for idx_1, idx_0 in zip(k_1, k_0)]))
-        
-        # p_r =
 
 
         deno = np.array([self.kk_mtx[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
         # p_r = np.exp( - deno)
-        return np.log(p_0) + np.log(p_1) - deno
+        return (np.log(p_0) + np.log(p_1) - deno).tolist()
 
 class SoftmaxApprSamplerPop(SoftmaxApprSampler):
     """
@@ -406,11 +387,11 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
                 sampled_item = items[k]
 
                 p_r = self.pop_probs_mat[sampled_item, c]
-                final_items.append(sampled_item)
+                final_items.append(sampled_item + 1)
                 final_probs.append(p_r)
 
             final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
-            return  final_items, final_probs
+            return  final_items, final_probs.tolist()
         return sample
     
     def compute_item_p(self, user_id, item_list):
@@ -424,7 +405,7 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
         # p_r =
         p_r = np.squeeze(np.array([self.pop_probs_mat[idx,:].data for idx in item_list ]))
         # p_r = np.array(self.pop_probs_mat[item_list,:].data)
-        return np.log(p_0) + np.log(p_1) + np.log(p_r)
+        return (np.log(p_0) + np.log(p_1) + np.log(p_r)).tolist()
 
 class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
     def __init__(self, mat, num_neg, user_embs, item_embs, num_cluster):
@@ -478,11 +459,11 @@ class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
                 rui_items =  np.matmul(self.user_embs[user_id], self.item_emb_res[items].T)
                 # to compute on the fly without delta
                 item_sample_idx, p = self.sample_final_items(rui_items)
-                final_items.append(items[item_sample_idx])
+                final_items.append(items[item_sample_idx] + 1)
                 final_probs.append(p)
             
             final_probs = np.log(p_0) + np.log(p_1) +  np.log(np.array(final_probs))
-            return final_items, final_probs
+            return final_items, final_probs.tolist()
         return sample
 
     def compute_item_p(self, user_id, item_list):
@@ -496,7 +477,7 @@ class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
         frac = np.matmul(self.user_embs[user_id], self.item_emb_res[item_list].T)
         deno = np.array([self.kk_mtx_res[idx_0, idx_1] for idx_0, idx_1 in zip(k_0, k_1)])
         # p_r = np.exp(frac - deno)
-        return np.log(p_0) + np.log(p_1) + frac - deno
+        return (np.log(p_0) + np.log(p_1) + frac - deno).tolist()
 
 
 
@@ -512,6 +493,26 @@ def worker_init_fn(worker_id):
     dataset.start_user = overall_start + worker_id * per_worker
     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
 
+def get_max_length(x):
+    return len(max(x, key=len))
+
+def pad_sequence(seq):
+    def _pad(_it, _max_len):
+        return _it + [0] * (_max_len - len(_it))
+    return [_pad(it, get_max_length(seq)) for it in seq]
+
+def custom_collate(batch):
+    transposed = zip(*batch)
+    lst = []
+    for samples in transposed:
+        if type(samples[0]) in [np.int, np.int32, np.int64]:
+               lst.append(torch.LongTensor(samples))
+        else:
+            if type(samples[0][0]) in [np.int, np.int32, np.int64]:
+                lst.append(torch.LongTensor(pad_sequence(samples)))
+            else:
+                lst.append(torch.tensor(pad_sequence(samples)))
+    return lst
 
 def setup_seed(seed):
     import os
@@ -528,7 +529,7 @@ def setup_seed(seed):
 from dataloader import RecData, Sampler_Dataset
 from torch.utils.data import DataLoader
 if __name__ == "__main__":
-    data = RecData('datasets', 'ml100kdata.mat')
+    data = RecData('datasets', 'ml100k')
     train, test = data.get_data(0.8)
     user_num, item_num = train.shape
     # user_emb = np.load('u.npy')
@@ -536,14 +537,14 @@ if __name__ == "__main__":
     setup_seed(20)
     user_emb, item_emb = torch.randn((user_num, 20)), torch.randn((item_num, 20))
     # user_emb , item_emb = torch.tensor(user_emb), torch.tensor(item_emb)
-    sampler = ExactSamplerModel(train, 100000, user_emb, item_emb, 25)
+    sampler = SoftmaxApprSampler(train, 1000, user_emb, item_emb, 25)
     # sampler = ExactSamplerModel(train[:50], 5000, user_emb, item_emb, 25)
 
     train_sample = Sampler_Dataset(sampler)
-    train_dataloader = DataLoader(train_sample, batch_size=16, num_workers=6,worker_init_fn=worker_init_fn)
+    train_dataloader = DataLoader(train_sample, batch_size=4, num_workers=0, worker_init_fn=worker_init_fn, collate_fn=custom_collate)
     b = 0
     for idx, data in enumerate(train_dataloader):
-        user_id, user_his, ruis, neg_id, prob = data
+        user_his, ruis, prob_pos, neg_id, prob = data
         # print('Batch ', idx)
         # if 0 not in user_id:
         #     continue
