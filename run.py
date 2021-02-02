@@ -18,7 +18,7 @@ import datetime
 import time
 import math
 import os
-
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 
@@ -42,10 +42,10 @@ def evaluate(model, train_mat, test_mat, config, logger, device):
 
 def get_user_embs(data_mat, model, device):
     data = UserItemData(data_mat)
-    dataloader = DataLoader(data, batch_size=config.batch_size_u, num_workers=config.num_workers, pin_memory=True, shuffle=False)
+    dataloader = DataLoader(data, batch_size=config.batch_size_u, num_workers=config.num_workers, pin_memory=True, shuffle=False, collate_fn=utils.custom_collate)
     user_lst = []
     for e in dataloader:
-        user_his, _, _, _, _ = e
+        user_his, _, _, _ = e
         user_emb = model._get_user_emb(user_his.to(device))
         user_lst.append(user_emb)
     return torch.cat(user_lst, dim=0)
@@ -62,7 +62,7 @@ def train_model(model, train_mat, test_mat, config, logger):
         
         if config.sampler == 0:
             train_data = UserItemData(train_mat)
-            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, pin_memory=True, shuffle=True)
+            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, pin_memory=True, shuffle=True, collate_fn=utils.custom_collate)
             # logging.info('Finish Loading Dataset, Start training !!!')
 
 
@@ -78,14 +78,14 @@ def train_model(model, train_mat, test_mat, config, logger):
         for batch_idx, data in enumerate(train_dataloader):
             model.train()
 
-            user_his, pos_id, prob_pos, neg_id, prob_neg = data
-            user_his, pos_id, prob_pos, neg_id, prob_neg = user_his.to(device), pos_id.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
+            pos_id, prob_pos, neg_id, prob_neg = data
+            pos_id, prob_pos, neg_id, prob_neg = pos_id.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
             optimizer.zero_grad()
-            pos_rat, neg_rat , mu, logvar = model(user_his, pos_id, neg_id) 
+            pos_rat, neg_rat, mu, logvar = model(pos_id, neg_id) 
 
-            loss = model.loss_function(user_his, neg_rat, prob_neg, pos_rat, prob_pos, reduction=config.reduction)
+            loss = model.loss_function(neg_rat, prob_neg, pos_rat, prob_pos, reduction=config.reduction)
             
-            kl_divergence = model.kl_loss(mu, logvar, config.anneal) / (batch_idx + 1)
+            kl_divergence = model.kl_loss(mu, logvar, config.anneal, reduction=config.reduction)
 
             # if (batch_idx % 5) == 0:
             # logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
@@ -138,14 +138,14 @@ def main(config, logger=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Initialize Parameters!')
     parser.add_argument('-data', default='ml100k', type=str, help='path of datafile')
-    parser.add_argument('-d', '--dim', default=[64], type=list, help='the dimenson of the latent vector for student model')
+    parser.add_argument('-d', '--dim', default=[32, 10], type=list, help='the dimenson of the latent vector for student model')
     parser.add_argument('-s','--sample_num', default=200, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
-    parser.add_argument('-b', '--batch_size', default=32, type=int, help='the batch size for training')
-    parser.add_argument('-e','--epoch', default=1000, type=int, help='the number of epoches')
+    parser.add_argument('-b', '--batch_size', default=128, type=int, help='the batch size for training')
+    parser.add_argument('-e','--epoch', default=500, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
-    parser.add_argument('-lr', '--learning_rate', default=0.5, type=float, help='the learning rate for training')
+    parser.add_argument('-lr', '--learning_rate', default=0.001, type=float, help='the learning rate for training')
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
     parser.add_argument('--ratio', default=0.8, type=float, help='the spilit ratio of dataset for train and test')
     parser.add_argument('--log_path', default='logs_test', type=str, help='the path for log files')
@@ -158,8 +158,8 @@ if __name__ == "__main__":
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
     parser.add_argument('--anneal', default=1.0, type=float, help='parameters for kl loss')
-    parser.add_argument('--batch_size_u', default=4096, type=int, help='batch size user for inference')
-    parser.add_argument('--reduction', default=True, type=bool, help='loss if reduction')
+    parser.add_argument('--batch_size_u', default=128, type=int, help='batch size user for inference')
+    parser.add_argument('--reduction', default=False, type=bool, help='loss if reduction')
 
 
     config = parser.parse_args()

@@ -37,7 +37,7 @@ class SamplerUserModel:
             for i in np.random.permutation(range(start_id, end_id)):
                 self.preprocess(i)
                 neg_item, neg_prob = sample_negative(i)
-                user_his = self.mat[i].toarray()[0].tolist()
+                # user_his = self.mat[i].toarray()[0].tolist()
                 pos_idx = self.mat[i].nonzero()[1] # array
                 pos_prob = self.compute_item_p(i, pos_idx)
                 pos_idx = (pos_idx + 1).tolist()
@@ -45,7 +45,7 @@ class SamplerUserModel:
                     pos_prob = pos_prob.tolist()
                 if type(neg_prob) in  [np.ndarray, np.array]:
                     neg_prob = neg_prob.tolist()
-                yield user_his, pos_idx, pos_prob, neg_item, neg_prob
+                yield pos_idx, pos_prob, neg_item, neg_prob
         return generate_tuples
     
     def compute_item_p(self, user_id, item_list):
