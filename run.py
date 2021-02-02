@@ -103,6 +103,7 @@ def train_model(model, train_mat, test_mat, config, logger):
         if (epoch % 5) == 0:
             result = evaluate(model, train_mat, test_mat, config, logger, device)
             logger.info('***************Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(result['item_ndcg'][4], result['item_ndcg'][9], result['item_ndcg'][49]))
+            logger.info('***************Eval_Res : RECALL@5,10,50 %.6f, %.6f, %.6f'%(result['item_recall'][4], result['item_recall'][9], result['item_recall'][49]))
 
 
 def utils_optim(learning_rate, model):
@@ -138,8 +139,8 @@ def main(config, logger=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Initialize Parameters!')
     parser.add_argument('-data', default='ml10M', type=str, help='path of datafile')
-    parser.add_argument('-d', '--dim', default=[600, 200], type=list, help='the dimenson of the latent vector for student model')
-    parser.add_argument('-s','--sample_num', default=200, type=int, help='the number of sampled items')
+    parser.add_argument('-d', '--dim', default=[200, 32], type=list, help='the dimenson of the latent vector for student model')
+    parser.add_argument('-s','--sample_num', default=500, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
     parser.add_argument('-b', '--batch_size', default=32, type=int, help='the batch size for training')
@@ -153,7 +154,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=0, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
+    parser.add_argument('--sampler', default=1, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
@@ -183,6 +184,7 @@ if __name__ == "__main__":
     # print('ndcg@5,10,50, ', m['item_ndcg'][[4,9,49]])
 
     logger.info('Eval_Res : NDCG@5,10,50 %.6f, %.6f, %.6f'%(m['item_ndcg'][4], m['item_ndcg'][9], m['item_ndcg'][49]))
+    logger.info('Eval_Res : RECALL@5,10,50 %.6f, %.6f, %.6f'%(m['item_recall'][4], m['item_recall'][9], m['item_recall'][49]))
 
     logger.info("Finish")
     svmat_name = log_file_name + '.mat'
