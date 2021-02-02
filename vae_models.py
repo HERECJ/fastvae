@@ -38,8 +38,8 @@ class BaseVAE(nn.Module):
         # item_id is padded
         count_nonzero = item_id.count_nonzero(dim=1).unsqueeze(-1) # batch_user * 1
         user_embs = self.encode_layer_0(item_id) # batch_user * dims
-        user_embs_norm = torch.sum(user_embs, dim=1) / count_nonzero
-        user_embs = self.dropout(user_embs_norm)
+        user_embs = torch.sum(user_embs, dim=1) / count_nonzero.pow(0.5)
+        user_embs = self.dropout(user_embs)
         
         h = self.act(user_embs)
         h = self.encode_layer_1(h)
@@ -47,7 +47,7 @@ class BaseVAE(nn.Module):
         return mu, logvar
     
     def decode(self, user_emb_encode, items):
-        user_emb = self.act(self.decode_layer_0(user_emb_encode))
+        user_emb = self.decode_layer_0(user_emb_encode)
         item_embs = self._Item_Embeddings(items)
         # item_embs = F.normalize(item_embs)
         return torch.matmul(user_emb, item_embs.T)
@@ -80,15 +80,16 @@ class BaseVAE(nn.Module):
     
     def loss_function(self, part_rats, prob_neg=None, pos_rats=None, prob_pos=None, reduction=False):
         logits = F.log_softmax(part_rats, dim=1)
+        idx_mtx = (self.pos_items > 0).double()
         if reduction is True:
-            return -torch.sum(torch.gather(logits, 1, self.pos_items)[:,1:], dim=-1).mean()
+            return -torch.sum(torch.gather(logits, 1, self.pos_items) * idx_mtx, dim=-1).mean()
         else:
-            return -torch.sum(torch.gather(logits, 1, self.pos_items)[:,1:], dim=-1).sum()
+            return -torch.sum(torch.gather(logits, 1, self.pos_items)* idx_mtx, dim=-1).sum()
  
 
     def _get_user_emb(self, user_his):
         user_emb, _ = self.encode(user_his)
-        return self.act(self.decode_layer_0(user_emb))
+        return self.decode_layer_0(user_emb)
 
     def _get_item_emb(self):
         return self._Item_Embeddings.weight[1:]
@@ -99,7 +100,7 @@ class VAE_Sampler(BaseVAE):
         super(VAE_Sampler, self).__init__(num_item, dims, active='relu', dropout=0.5)
     
     def decode(self, user_emb_encode, items):
-        user_emb = self.act(self.decode_layer_0(user_emb_encode))
+        user_emb = self.decode_layer_0(user_emb_encode)
         item_embs = self._Item_Embeddings(items)
         return (user_emb.unsqueeze(1) * item_embs).sum(-1)
 
@@ -114,12 +115,13 @@ class VAE_Sampler(BaseVAE):
         return self.decode(z, pos_items), self.decode(z, neg_items), mu, logvar
     
     def loss_function(self, part_rats, log_prob_neg=None, pos_rats=None, log_prob_pos=None, reduction=False):
+        idx_mtx = (pos_rats != 0).double()
         new_pos = pos_rats - log_prob_pos.detach()
         new_neg = part_rats - log_prob_neg.detach()
         parts_sum_exp = torch.sum(torch.exp(new_neg), dim=-1).unsqueeze(-1)
         new_pos[pos_rats==0] = -float("Inf")
         final = torch.log( torch.exp(new_pos) + parts_sum_exp)
         if reduction is True:
-            return torch.mean((- new_pos + final)[pos_rats!=0], dim=-1 )
+            return torch.sum((- new_pos + final)* idx_mtx, dim=-1 ).mean()
         else:
-            return torch.sum((- new_pos + final)[pos_rats!=0], dim=-1 )
+            return torch.sum((- new_pos + final)* idx_mtx, dim=-1 ).sum()

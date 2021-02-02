@@ -53,13 +53,16 @@ class RecData(object):
 
 
 class UserItemData(Dataset):
-    def __init__(self, train_mat):
+    def __init__(self, train_mat, train_flag=True):
         super(UserItemData, self).__init__()
         # self.train = train_mat.tocoo()
         # import pdb; pdb.set_trace()
         # self.user, self.item = self.train.row.astype(np.int64), self.train.col.astype(np.int64)
         self.train = train_mat
-        self.users = np.random.permutation(self.train.shape[0])
+        if train_flag is True:
+            self.users = np.random.permutation(self.train.shape[0])
+        else:
+            self.users = np.arange(self.train.shape[0])
     
     def __len__(self):
         return self.train.shape[0]
@@ -67,7 +70,7 @@ class UserItemData(Dataset):
     def __getitem__(self, idx):
         # return self.user[idx], self.item[idx]
         pos_idx = self.train[self.users[idx]].nonzero()[1]
-        return (pos_idx + 1).tolist(), 0, 0, 0
+        return (pos_idx + 1).tolist(), (pos_idx + 1).tolist(), 0, 0
 
 class Sampler_Dataset(IterableDataset):
     def __init__(self,sample_class):
