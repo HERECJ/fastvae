@@ -29,7 +29,7 @@ def evaluate(model, train_mat, test_mat, config, logger, device):
     with torch.no_grad():
         user_num, item_num = train_mat.shape
         
-        user_emb = get_user_embs(test_mat, model, device)
+        user_emb = get_user_embs(train_mat, model, device)
         item_emb = model._get_item_emb()
         
         user_emb = user_emb.cpu().data
@@ -56,7 +56,7 @@ def train_model(model, train_mat, test_mat, config, logger):
     scheduler = StepLR(optimizer, config.step_size, config.gamma)
     device = torch.device(config.device)
     for epoch in range(config.epoch):
-        loss_ = 0.0
+        loss_ , kld_loss = 0.0, 0.0
         logger.info("Epoch %d"%epoch)
         # print("--Epoch %d"%epoch)
         
@@ -85,18 +85,19 @@ def train_model(model, train_mat, test_mat, config, logger):
 
             loss = model.loss_function(user_his, neg_rat, prob_neg, pos_rat, prob_pos, reduction=config.reduction)
             
-            kl_divergence = model.kl_loss(mu, logvar, config.anneal)
+            kl_divergence = model.kl_loss(mu, logvar, config.anneal) / (batch_idx + 1)
 
             # if (batch_idx % 5) == 0:
             # logger.info("--Batch %d, loss : %.4f, kl_loss : %.4f "%(batch_idx, loss.data, kl_divergence))
-
+            loss_ += loss
+            kld_loss += kl_divergence
             loss += kl_divergence
             loss.backward()
             # torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
-            loss_ += loss
+            
         
-        logger.info('-- loss : %.4f'% loss_)
+        logger.info('-- loss : %.4f,  kl_dis : %.4f'% (loss_, kld_loss))
             
         scheduler.step()
         if (epoch % 20) == 0:
@@ -138,21 +139,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Initialize Parameters!')
     parser.add_argument('-data', default='ml100k', type=str, help='path of datafile')
     parser.add_argument('-d', '--dim', default=[64], type=list, help='the dimenson of the latent vector for student model')
-    parser.add_argument('-s','--sample_num', default=100, type=int, help='the number of sampled items')
+    parser.add_argument('-s','--sample_num', default=200, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
-    parser.add_argument('-b', '--batch_size', default=16, type=int, help='the batch size for training')
-    parser.add_argument('-e','--epoch', default=60, type=int, help='the number of epoches')
+    parser.add_argument('-b', '--batch_size', default=32, type=int, help='the batch size for training')
+    parser.add_argument('-e','--epoch', default=1000, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
-    parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help='the learning rate for training')
+    parser.add_argument('-lr', '--learning_rate', default=0.5, type=float, help='the learning rate for training')
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
     parser.add_argument('--ratio', default=0.8, type=float, help='the spilit ratio of dataset for train and test')
-    parser.add_argument('--log_path', default='logs', type=str, help='the path for log files')
+    parser.add_argument('--log_path', default='logs_test', type=str, help='the path for log files')
     parser.add_argument('--num_workers', default=8, type=int, help='the number of workers for dataloader')
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
+    parser.add_argument('--sampler', default=1, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
