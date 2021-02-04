@@ -118,10 +118,8 @@ class VAE_Sampler(BaseVAE):
         idx_mtx = (pos_rats != 0).double()
         new_pos = pos_rats - log_prob_pos.detach()
         new_neg = part_rats - log_prob_neg.detach()
-        parts_sum_exp = torch.sum(torch.exp(new_neg), dim=-1).unsqueeze(-1)
-        # new_pos[pos_rats==0] = -float("Inf")
-        new_pos[pos_rats==0] = -1e10
-        final = torch.log( torch.exp(new_pos) + parts_sum_exp)
+        parts_log_sum_exp = torch.logsumexp(new_neg, dim=-1).unsqueeze(-1)
+        final = torch.log( torch.exp(new_pos) + torch.exp(parts_log_sum_exp))
         if reduction is True:
             return torch.sum((- new_pos + final) * idx_mtx, dim=-1 ).mean()
         else:

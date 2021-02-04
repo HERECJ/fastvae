@@ -70,44 +70,16 @@ class UserItemData(Dataset):
     def __getitem__(self, idx):
         # return self.user[idx], self.item[idx]
         pos_idx = self.train[self.users[idx]].nonzero()[1]
-        return (pos_idx + 1).tolist(), (pos_idx + 1).tolist(), 0, 0
+        return pos_idx, pos_idx, 0, 0
 
-class Sampler_Dataset(IterableDataset):
+
+class Sampler_Dataset(Dataset):
     def __init__(self,sample_class):
         super(Sampler_Dataset, self).__init__()
         self.sampler = sample_class
-        self.start_user = 0
-        self.end_user = sample_class.num_users
-    
-    def __iter__(self):
-        return self.sampler.negative_sampler(self.start_user, self.end_user)()
-    
 
-def get_max_length(x):
-    return len(max(x, key=len))
+    def __len__(self):
+        return self.sampler.num_users
 
-def pad_sequence(seq):
-    def _pad(_it, _max_len):
-        return _it + [0] * (_max_len - len(_it))
-    return [_pad(it, get_max_length(seq)) for it in seq]
-
-def custom_collate(batch):
-    transposed = zip(*batch)
-    lst = []
-    for samples in transposed:
-        if type(samples[0]) in [np.int, np.int32, np.int64]:
-               lst.append(torch.LongTensor(samples))
-        else:
-            if type(samples[0][0]) in [np.int, np.int32, np.int64]:
-                lst.append(torch.LongTensor(pad_sequence(samples)))
-            else:
-                lst.append(torch.tensor(pad_sequence(samples)))
-    return lst
-
-if __name__ == "__main__":
-    data = RecData('datasets', 'ml100k')
-    train, test = data.get_data(0.8)
-    train_data = UserItemData(train)
-    train_loader = DataLoader(train_data, batch_size=10, num_workers=0, collate_fn=custom_collate)
-    for idx, data in enumerate(train_loader):
-        b = b+1
+    def __getitem__(self, idx):
+        return self.sampler.negative_sampler(idx)

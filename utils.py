@@ -44,23 +44,50 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
-def worker_init_fn(worker_id):
-    worker_info = torch.utils.data.get_worker_info()
-    dataset = worker_info.dataset  # the dataset copy in this worker process
-    overall_start = dataset.start_user
-    overall_end = dataset.end_user
-    # configure the dataset to only process the split workload
-    per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
-    worker_id = worker_info.id
-    dataset.start_user = overall_start + worker_id * per_worker
-    dataset.end_user = min(dataset.start_user + per_worker, overall_end)
+# def worker_init_fn(worker_id):
+#     worker_info = torch.utils.data.get_worker_info()
+#     dataset = worker_info.dataset  # the dataset copy in this worker process
+#     overall_start = dataset.start_user
+#     overall_end = dataset.end_user
+#     # configure the dataset to only process the split workload
+#     per_worker = int(math.ceil((overall_end - overall_start) / float(worker_info.num_workers)))
+#     worker_id = worker_info.id
+#     dataset.start_user = overall_start + worker_id * per_worker
+#     dataset.end_user = min(dataset.start_user + per_worker, overall_end)
+
+# def get_max_length(x):
+#     return len(max(x, key=len))
+
+# def pad_sequence(seq):
+#     def _pad(_it, _max_len):
+#         return _it + [0] * (_max_len - len(_it))
+#     return [_pad(it, get_max_length(seq)) for it in seq]
+
+# def custom_collate(batch):
+#     transposed = zip(*batch)
+#     lst = []
+#     for samples in transposed:
+#         if type(samples[0]) in [np.int, np.int32, np.int64]:
+#                lst.append(torch.LongTensor(samples))
+#         else:
+#             if type(samples[0][0]) in [np.int, np.int32, np.int64]:
+#                 lst.append(torch.LongTensor(pad_sequence(samples)))
+#             else:
+#                 lst.append(torch.tensor(pad_sequence(samples)))
+#     return lst
+
 
 def get_max_length(x):
-    return len(max(x, key=len))
+    return max(x, key=lambda x: x.shape[0]).shape[0]
+
+def pad_sequence_int(seq):
+    def _pad(_it, _max_len):
+        return np.concatenate(( _it + 1, np.zeros(_max_len - len(_it), dtype=np.int32) ))
+    return [_pad(it, get_max_length(seq)) for it in seq]
 
 def pad_sequence(seq):
     def _pad(_it, _max_len):
-        return _it + [0] * (_max_len - len(_it))
+        return np.concatenate(( _it, np.zeros(_max_len - len(_it)) ))
     return [_pad(it, get_max_length(seq)) for it in seq]
 
 def custom_collate(batch):
@@ -71,7 +98,7 @@ def custom_collate(batch):
                lst.append(torch.LongTensor(samples))
         else:
             if type(samples[0][0]) in [np.int, np.int32, np.int64]:
-                lst.append(torch.LongTensor(pad_sequence(samples)))
+                lst.append(torch.LongTensor(pad_sequence_int(samples)))
             else:
                 lst.append(torch.tensor(pad_sequence(samples)))
     return lst

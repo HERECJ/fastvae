@@ -18,9 +18,6 @@ import datetime
 import time
 import math
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-
 
 
 def evaluate(model, train_mat, test_mat, config, logger, device):
@@ -70,9 +67,9 @@ def train_model(model, train_mat, test_mat, config, logger):
             user_emb = get_user_embs(train_mat, model, device)
             item_emb = model._get_item_emb()
 
-            sampler = sampler_list[config.sampler-1](train_mat, config.sample_num, user_emb, item_emb, config.cluster_num)
+            sampler = sampler_list[config.sampler-1](train_mat, config.sample_num, user_emb.cpu().data.detach().numpy(), item_emb.cpu().data.detach().numpy(), config.cluster_num)
             train_data = Sampler_Dataset(sampler)
-            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers,worker_init_fn=utils.worker_init_fn, collate_fn=utils.custom_collate, pin_memory=True)        
+            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, collate_fn=utils.custom_collate, pin_memory=True, shuffle=True)        
             # logging.info('Finish Sampling, Start training !!!')
         
         for batch_idx, data in enumerate(train_dataloader):
@@ -143,8 +140,8 @@ if __name__ == "__main__":
     parser.add_argument('-s','--sample_num', default=500, type=int, help='the number of sampled items')
     parser.add_argument('--subspace_num', default=2, type=int, help='the number of splitted sub space')
     parser.add_argument('--cluster_num', default=16, type=int, help='the number of cluster centroids')
-    parser.add_argument('-b', '--batch_size', default=32, type=int, help='the batch size for training')
-    parser.add_argument('-e','--epoch', default=50, type=int, help='the number of epoches')
+    parser.add_argument('-b', '--batch_size', default=256, type=int, help='the batch size for training')
+    parser.add_argument('-e','--epoch', default=3, type=int, help='the number of epoches')
     parser.add_argument('-o','--optim', default='adam', type=str, help='the optimizer for training')
     parser.add_argument('-lr', '--learning_rate', default=0.001, type=float, help='the learning rate for training')
     parser.add_argument('--seed', default=20, type=int, help='random seed values')
@@ -173,7 +170,7 @@ if __name__ == "__main__":
     sampler = str(config.sampler)
     ISOTIMEFORMAT = '%m%d-%H%M%S'
     timestamp = str(datetime.datetime.now().strftime(ISOTIMEFORMAT))
-    loglogs = '_'.join((config.data, alg, sampler, timestamp))
+    loglogs = '_'.join((config.data, sampler, timestamp))
     log_file_name = os.path.join(config.log_path, loglogs)
     logger = utils.get_logger(log_file_name)
     
