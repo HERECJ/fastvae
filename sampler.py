@@ -523,7 +523,7 @@ def custom_collate(batch):
                 lst.append(torch.LongTensor(pad_sequence_int(samples)))
             else:
                 lst.append(torch.tensor(pad_sequence(samples)))
-    print("padding time: ", time.time() - t0)
+    # print("padding time: ", time.time() - t0)
     return lst
 
 def setup_seed(seed):
@@ -571,9 +571,8 @@ if __name__ == "__main__":
     sampler = UniformSoftmaxSampler(train, 10000, user_emb, item_emb, 25)
     # sampler = ExactSamplerModel(train[:50], 5000, user_emb, item_emb, 25)
 
-    train_sample = Sampler2_Dataset(sampler)
+    train_sample = Sampler_Dataset(sampler)
     train_dataloader = DataLoader(train_sample, batch_size=16, num_workers=4, collate_fn=custom_collate)
-    b = 0
 
     for idx, data in enumerate(train_dataloader):
         ruis, prob_pos, neg_id, prob_neg = data
