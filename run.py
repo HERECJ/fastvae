@@ -74,6 +74,8 @@ def train_model(model, train_mat, test_mat, config, logger):
         
         for batch_idx, data in enumerate(train_dataloader):
             model.train()
+            if batch_idx > 45:
+                b = 0
 
             pos_id, prob_pos, neg_id, prob_neg = data
             pos_id, prob_pos, neg_id, prob_neg = pos_id.to(device), prob_pos.to(device), neg_id.to(device), prob_neg.to(device)
@@ -130,6 +132,10 @@ def main(config, logger=None):
     model = model.to(device)
     train_model(model, train_mat, test_mat, config, logger)
     
+    # user_emb = get_user_embs(train_mat, model, device)
+    # item_emb = model._get_item_emb()
+    # np.save('ml10M_user.npy', user_emb.cpu().data.detach().numpy())
+    # np.save('ml10M_item.npy', item_emb.cpu().data.detach().numpy())
     return evaluate(model, train_mat, test_mat, config, logger, device)
 
 
@@ -151,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=1, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
+    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')

@@ -79,25 +79,28 @@ class ExactSamplerModel(SamplerUserModel):
         super(ExactSamplerModel, self).preprocess(user_id)
         self.pred = self.user_embs[user_id] @ self.item_embs.T
         self.score = softamx_ny(self.pred)
-        self.score_cum = self.score.cumsum()
-        self.score_cum[-1] = 1.0
+        # self.score_cum = self.score.cumsum()
+        # self.score_cum[-1] = 1.0
+        self.table = alias.alias_table_construct(self.score)
 
         
     def __sampler__(self, user_id):
         def sample():
-            neg_items = np.zeros(self.num_neg, dtype=np.int32)
-            probs = np.zeros(self.num_neg)
+            # neg_items = np.zeros(self.num_neg, dtype=np.int32)
+            # probs = np.zeros(self.num_neg)
             seeds = np.random.rand(self.num_neg)
-            for idx, s in enumerate(seeds):
-                k = bisect.bisect(self.score_cum,s)
-                p = self.pred[k]
-                neg_items[idx] = k
-                probs[idx] = p
+            # for idx, s in enumerate(seeds):
+            #     k = bisect.bisect(self.score_cum,s)
+            #     p = self.pred[k]
+            #     neg_items[idx] = k
+            #     probs[idx] = p
+            neg_items = alias.sample_from_alias_table_1d(self.table, seeds)
+            probs = np.log(self.score[neg_items])
             return neg_items, probs
         return sample
 
     def compute_item_p(self, user_id, item_list):
-        return self.pred[item_list]
+        return np.log(self.score[item_list])
 
 
 class SoftmaxApprSampler(SamplerUserModel):
@@ -230,7 +233,8 @@ class SoftmaxApprSampler(SamplerUserModel):
             return k, pred[k] 
         elif mode == 1:
             score_cum = pred.cumsum()
-            k = bisect.bisect(score_cum, np.random.rand()) 
+            score_cum[-1] = 1.0
+            k = bisect.bisect(score_cum, np.random.rand())
             return k, pred[k]
 
 class SoftmaxApprSamplerUniform(SoftmaxApprSampler):
