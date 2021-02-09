@@ -56,7 +56,6 @@ class UserItemData(Dataset):
     def __init__(self, train_mat, train_flag=True):
         super(UserItemData, self).__init__()
         # self.train = train_mat.tocoo()
-        # import pdb; pdb.set_trace()
         # self.user, self.item = self.train.row.astype(np.int64), self.train.col.astype(np.int64)
         self.train = train_mat
         if train_flag is True:

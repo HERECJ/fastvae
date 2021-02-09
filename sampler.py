@@ -483,7 +483,86 @@ class UniformSoftmaxSampler(SoftmaxApprSamplerUniform):
         # p_r = np.exp(frac - deno)
         return np.log(p_0) + np.log(p_1) + frac - deno
 
+class DynamicNegativeSampling(SamplerUserModel):
+    def __init__(self,  mat, num_neg, user_embs, item_embs, num_cluster):
+        self.mat = mat.tocsr()
+        self.num_users, self.num_items = mat.shape
+        self.num_neg = num_neg
+        self.user = user_embs
+        self.item = item_embs
+        self.num_sample_uni = num_cluster
 
+    def __sampler__(self, user_id):
+        def sample():
+            uniform_item = np.random.randint(0, self.num_items, size=(self.num_neg, self.num_sample_uni))
+            scores = np.matmul(self.item[uniform_item], self.user[user_id])
+            max_idx = np.argmax(scores, axis=-1)
+            idx = np.arange(self.num_neg)
+            items = uniform_item[idx, max_idx]
+            return items, scores[idx, max_idx]
+        return sample
+
+    def compute_item_p(self, user_id, item_list):
+        return np.matmul(self.item[item_list], self.user[user_id])
+
+class Tree:
+    def __init__(self, mat):
+        self.depth = math.ceil(math.log2(mat.shape[0]))
+        self.tree = [None] * self.depth
+        self.tree[0] = mat
+        for d in range(1, self.depth):
+            child = self.tree[d-1]
+            if child.shape[0] % 2 != 0:
+                child = np.r_[child, np.zeros([1, child.shape[1]])]
+            self.tree[d] = child[::2] + child[1::2]
+
+    def sampling(self, vector, neg):
+        rand_num_arr = np.random.rand(neg, self.depth)
+        samples = np.zeros(neg, dtype=np.int32)
+        prob = np.zeros(neg, dtype=np.float32)
+        for i in range(neg):
+            selected = 0
+            rand_num = rand_num_arr[i]
+            for d in range(self.depth, 0, -1):
+                if self.tree[d-1].shape[0] > selected * 2 + 1:
+                    score = np.matmul(self.tree[d-1][[selected * 2, selected * 2 + 1]], vector)
+                    idx_child = 0 if score[0]/(score[0]+score[1]) > rand_num[d-1] else 1
+                    selected = selected * 2 + idx_child
+                else:
+                    selected = selected * 2
+            prob[i] = score[idx_child]
+            samples[i] = selected
+        return samples, prob
+
+
+class KernelBasedSampling(SamplerUserModel):
+    @staticmethod
+    def getkernel(mat, alpha):
+        phi_t = np.matmul(np.expand_dims(mat, axis=2), np.expand_dims(mat, axis=1))
+        phi_ = np.reshape(phi_t, (mat.shape[0], -1)) #* math.sqrt(alpha)
+        phi = np.c_[phi_, np.ones(mat.shape[0])]
+        return phi
+
+    def __init__(self,  mat, num_neg, user_embs, item_embs, num_cluster):
+        self.mat = mat.tocsr()
+        self.num_users, self.num_items = mat.shape
+        self.num_neg = num_neg
+        self.user = user_embs
+        self.item = item_embs
+        self.alpha = num_cluster
+        # construct balance binary tree
+        self.item_phi = KernelBasedSampling.getkernel(self.item, self.alpha)
+        print(self.item_phi.shape)
+        self.user_phi = KernelBasedSampling.getkernel(self.user, self.alpha)
+        self.tree = Tree(self.item_phi)
+
+    def __sampler__(self, user_id):
+        def sample():
+            return self.tree.sampling(self.user_phi[user_id], self.num_neg)
+        return sample
+
+    def compute_item_p(self, user_id, item_list):
+        return np.matmul(self.item_phi[item_list], self.user_phi[user_id])
 
 
 def worker_init_fn(worker_id):

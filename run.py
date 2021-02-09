@@ -1,5 +1,5 @@
 from dataloader import RecData, UserItemData, Sampler_Dataset
-from sampler import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler
+from sampler import SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler, DynamicNegativeSampling, KernelBasedSampling
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,28 +48,32 @@ def get_user_embs(data_mat, model, device):
     return torch.cat(user_lst, dim=0)
 
 def train_model(model, train_mat, test_mat, config, logger):
-    sampler_list = [SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler]
+    sampler_list = [SamplerUserModel, PopularSamplerModel, ExactSamplerModel, SoftmaxApprSampler, SoftmaxApprSamplerUniform, SoftmaxApprSamplerPop, UniformSoftmaxSampler, DynamicNegativeSampling, KernelBasedSampling]
     optimizer = utils_optim(config.learning_rate, model)
     scheduler = StepLR(optimizer, config.step_size, config.gamma)
     device = torch.device(config.device)
     for epoch in range(config.epoch):
         loss_ , kld_loss = 0.0, 0.0
         logger.info("Epoch %d"%epoch)
-        # print("--Epoch %d"%epoch)
-        
+
         if config.sampler == 0:
             train_data = UserItemData(train_mat)
             train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, pin_memory=True, shuffle=True, collate_fn=utils.custom_collate)
             # logging.info('Finish Loading Dataset, Start training !!!')
 
-
         elif config.sampler > 0:
             user_emb = get_user_embs(train_mat, model, device)
             item_emb = model._get_item_emb()
 
-            sampler = sampler_list[config.sampler-1](train_mat, config.sample_num, user_emb.cpu().data.detach().numpy(), item_emb.cpu().data.detach().numpy(), config.cluster_num)
+            if config.sampler == 8:
+                cluster_num = 10
+            elif config.sampler == 9:
+                cluster_num = 100
+            else:
+                cluster_num = config.cluster_num
+            sampler = sampler_list[config.sampler-1](train_mat, config.sample_num, user_emb.cpu().data.detach().numpy(), item_emb.cpu().data.detach().numpy(), cluster_num)
             train_data = Sampler_Dataset(sampler)
-            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, collate_fn=utils.custom_collate, pin_memory=True, shuffle=True)        
+            train_dataloader = DataLoader(train_data, batch_size=config.batch_size, num_workers=config.num_workers, collate_fn=utils.custom_collate, pin_memory=True, shuffle=True)
             # logging.info('Finish Sampling, Start training !!!')
         
         for batch_idx, data in enumerate(train_dataloader):
@@ -131,11 +135,7 @@ def main(config, logger=None):
         raise ValueError('Not supported model name!!!')
     model = model.to(device)
     train_model(model, train_mat, test_mat, config, logger)
-    
-    # user_emb = get_user_embs(train_mat, model, device)
-    # item_emb = model._get_item_emb()
-    # np.save('ml10M_user.npy', user_emb.cpu().data.detach().numpy())
-    # np.save('ml10M_item.npy', item_emb.cpu().data.detach().numpy())
+
     return evaluate(model, train_mat, test_mat, config, logger, device)
 
 
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', default='datasets', type=str, help='the dir of datafiles')
     parser.add_argument('--device', default='cuda', type=str, help='device for training, cuda or gpu')
     parser.add_argument('--model', default='vae', type=str, help='model name')
-    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax')
+    parser.add_argument('--sampler', default=4, type=int, help='the sampler, 0 : no sampler, 1: uniform, 2: popular, 3: extrasoftmax, 4: ours, 5: our+uniform, 6: our+pop, 7: uniform+softmax, 8: Dynamic, 9: Kernel based')
     parser.add_argument('--fix_seed', default=True, type=bool, help='whether to fix the seed values')
     parser.add_argument('--step_size', default=5, type=int, help='step size for learning rate discount')
     parser.add_argument('--gamma', default=0.95, type=float, help='discout for lr')
