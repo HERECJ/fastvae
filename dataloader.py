@@ -25,7 +25,7 @@ class RecData(object):
             raise ValueError('not supported file type')
 
     def split_matrix(self, mat, ratio=0.8):
-        mat = mat.tocsr()  #按行读取，即每一行为一个用户
+        mat = mat.tocsr()
         m,n = mat.shape
         train_data_indices = []
         train_indptr = [0] * (m+1)
