@@ -398,6 +398,7 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
     
     def compute_item_p(self, user_id, item_list):
         clusters_idx = self.combine_cluster[item_list, :].nonzero()[1] # find the combine cluster idx
+        p_r = self.pop_probs_mat[item_list, clusters_idx].A.squeeze()
         k_0 = clusters_idx // self.num_cluster
         k_1 = clusters_idx % self.num_cluster
         
@@ -405,7 +406,7 @@ class SoftmaxApprSamplerPop(SoftmaxApprSampler):
         p_1 = self.p_table_1[k_0, k_1]
         
         # p_r =
-        p_r = self.pop_probs_mat[item_list,:].data
+#       # p_r = self.pop_probs_mat[item_list,:].data
         # p_r = np.array(self.pop_probs_mat[item_list,:].data)
         return np.log(p_0) + np.log(p_1) + np.log(p_r)
 
